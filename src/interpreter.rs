@@ -22,8 +22,6 @@ use error::{EvalError, EvalResult};
 use memory::{FieldRepr, Memory, Pointer, Repr};
 use primval::{self, PrimVal};
 
-const TRACE_EXECUTION: bool = false;
-
 struct Interpreter<'a, 'tcx: 'a, 'arena> {
     /// The results of the type checker, from rustc.
     tcx: &'a TyCtxt<'tcx>,
@@ -150,32 +148,24 @@ impl<'a, 'tcx: 'a, 'arena> Interpreter<'a, 'tcx, 'arena> {
         r
     }
 
-    fn log<F>(&self, extra_indent: usize, f: F) where F: FnOnce() {
-        let indent = self.stack.len() + extra_indent;
-        if !TRACE_EXECUTION { return; }
-        for _ in 0..indent { print!("    "); }
-        f();
-        println!("");
-    }
-
     fn run(&mut self) -> EvalResult<()> {
         'outer: while !self.stack.is_empty() {
             let mut current_block = self.frame().next_block;
 
             loop {
-                self.log(0, || print!("// {:?}", current_block));
+                trace!("// {:?}", current_block);
                 let current_mir = self.mir().clone(); // Cloning a reference.
                 let block_data = current_mir.basic_block_data(current_block);
 
                 for stmt in &block_data.statements {
-                    self.log(0, || print!("{:?}", stmt));
+                    trace!("{:?}", stmt);
                     let mir::StatementKind::Assign(ref lvalue, ref rvalue) = stmt.kind;
                     let result = self.eval_assignment(lvalue, rvalue);
                     try!(self.maybe_report(stmt.span, result));
                 }
 
                 let terminator = block_data.terminator();
-                self.log(0, || print!("{:?}", terminator.kind));
+                trace!("{:?}", terminator.kind);
 
                 let result = self.eval_terminator(terminator);
                 match try!(self.maybe_report(terminator.span, result)) {
@@ -196,6 +186,7 @@ impl<'a, 'tcx: 'a, 'arena> Interpreter<'a, 'tcx, 'arena> {
     fn push_stack_frame(&mut self, mir: CachedMir<'a, 'tcx>, substs: &'tcx Substs<'tcx>,
         return_ptr: Option<Pointer>)
     {
+        log_indent!(inc);
         self.substs_stack.push(substs);
 
         let arg_tys = mir.arg_decls.iter().map(|a| a.ty);
@@ -222,6 +213,7 @@ impl<'a, 'tcx: 'a, 'arena> Interpreter<'a, 'tcx, 'arena> {
 
     fn pop_stack_frame(&mut self) {
         let _frame = self.stack.pop().expect("tried to pop a stack frame, but there were none");
+        log_indent!(dec);
         // TODO(tsion): Deallocate local variables.
         self.substs_stack.pop();
     }
@@ -376,11 +368,12 @@ impl<'a, 'tcx: 'a, 'arena> Interpreter<'a, 'tcx, 'arena> {
     }
 
     fn drop(&mut self, ptr: Pointer, ty: ty::Ty<'tcx>) -> EvalResult<()> {
+        log_indent!(scope);
         if !self.type_needs_drop(ty) {
-            self.log(1, || print!("no need to drop {:?}", ty));
+            trace!("no need to drop {:?}", ty);
             return Ok(());
         }
-        self.log(1, || print!("need to drop {:?}", ty));
+        trace!("need to drop {:?}", ty);
 
         // TODO(tsion): Call user-defined Drop::drop impls.
 
@@ -389,7 +382,7 @@ impl<'a, 'tcx: 'a, 'arena> Interpreter<'a, 'tcx, 'arena> {
                 match self.memory.read_ptr(ptr) {
                     Ok(contents_ptr) => {
                         try!(self.drop(contents_ptr, contents_ty));
-                        self.log(1, || print!("deallocating box"));
+                        trace!("deallocating box");
                         try!(self.memory.deallocate(contents_ptr));
                     }
                     Err(EvalError::ReadBytesAsPointer) => {

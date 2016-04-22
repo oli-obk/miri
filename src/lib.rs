@@ -16,6 +16,7 @@ extern crate syntax;
 
 // From crates.io.
 extern crate byteorder;
+#[macro_use] extern crate log;
 
 mod error;
 pub mod interpreter;

@@ -3,6 +3,7 @@
 extern crate miri;
 extern crate rustc;
 extern crate rustc_driver;
+extern crate env_logger;
 
 use miri::interpreter;
 use rustc::session::Session;
@@ -25,6 +26,7 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
 }
 
 fn main() {
+    env_logger::init().unwrap();
     let args: Vec<String> = std::env::args().collect();
     rustc_driver::run_compiler(&args, &mut MiriCompilerCalls);
 }

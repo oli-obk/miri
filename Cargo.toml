@@ -12,3 +12,5 @@ name = "miri"
 
 [dependencies]
 byteorder = "0.4.2"
+log = { path = "../log" }
+env_logger = { path = "../log/env" }
