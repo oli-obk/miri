@@ -43,4 +43,5 @@ pub use memory::{
     Memory,
     Pointer,
     AllocId,
+    Stats,
 };

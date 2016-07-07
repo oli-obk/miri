@@ -251,6 +251,29 @@ impl<'a, 'tcx> Memory<'a, 'tcx> {
     pub fn endianess(&self) -> layout::Endian {
         self.layout.endian
     }
+
+    pub fn stats(&self) -> Stats {
+        Stats {
+            virtual_bytes_allocated: self.memory_usage,
+            max_virtual_bytes: self.memory_size,
+            allocations: self.alloc_map.len(),
+            current_alloc_id: self.next_id,
+        }
+    }
+}
+
+pub struct Stats {
+    /// The number of currently allocated virtual bytes. Actual host memory usage is much higher,
+    /// because for every virtual byte there is information whether the byte is initialized and
+    /// there is a datastructure that can be used to check whether some bytes belong to a pointer
+    pub virtual_bytes_allocated: u64,
+    /// The limit as configured when the `Memory` object was created
+    pub max_virtual_bytes: u64,
+    /// The number of allocations
+    pub allocations: usize,
+    /// The allocation id that will be used for the next allocation.
+    /// If it reaches `isize::max_value()` bad things will happen.
+    pub current_alloc_id: AllocId,
 }
 
 /// Allocation accessors
