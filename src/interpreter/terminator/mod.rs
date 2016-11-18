@@ -2,7 +2,7 @@ use rustc::hir::def_id::DefId;
 use rustc::mir;
 use rustc::traits::{self, Reveal};
 use rustc::ty::fold::TypeFoldable;
-use rustc::ty::layout::Layout;
+use rustc::ty::layout::{Layout, Size};
 use rustc::ty::subst::{Substs, Kind};
 use rustc::ty::{self, Ty, TyCtxt, BareFnTy};
 use syntax::codemap::{DUMMY_SP, Span};
@@ -603,8 +603,11 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                             assert_eq!(discr as usize as u64, discr);
                             adt_def.variants[discr as usize].fields.iter().zip(&nonnull.offsets)
                         } else {
-                            // FIXME: the zst variant might contain zst types that impl Drop
-                            return Ok(()); // nothing to do, this is zero sized (e.g. `None`)
+                            match nndiscr {
+                                0 => adt_def.variants[1].fields.iter().zip(&nonnull.offsets),
+                                1 => adt_def.variants[0].fields.iter().zip(&nonnull.offsets),
+                                _ => bug!("StructWrappedNullablePointer with bad nndiscr: {}", nndiscr),
+                            }
                         }
                     },
                     Layout::RawNullablePointer { nndiscr, .. } => {
@@ -619,8 +622,17 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                             self.drop(lval, field_ty, drop)?;
                             return Ok(());
                         } else {
-                            // FIXME: the zst variant might contain zst types that impl Drop
-                            return Ok(()); // nothing to do, this is zero sized (e.g. `None`)
+                            let fields = match nndiscr {
+                                0 => adt_def.variants[1].fields.iter(),
+                                1 => adt_def.variants[0].fields.iter(),
+                                _ => bug!("StructWrappedNullablePointer with bad nndiscr: {}", nndiscr),
+                            };
+                            let tcx = self.tcx;
+                            return self.drop_fields(
+                                fields.map(|ty| (monomorphize_field_ty(tcx, ty, substs), Size::from_bytes(0))),
+                                lval,
+                                drop
+                            );
                         }
                     },
                     _ => bug!("{:?} is not an adt layout", layout),

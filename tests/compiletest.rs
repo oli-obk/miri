@@ -118,6 +118,10 @@ fn compile_test() {
         let stderr = std::io::stderr();
         writeln!(stderr.lock(), "{} success, {} mir not found, {} crate not found, {} failed", success, mir_not_found, crate_not_found, failed).unwrap();
         assert_eq!(failed, 0, "some tests failed");
+        if std::env::var("MIRI_RUSTC_TEST").is_err() {
+            assert_eq!(mir_not_found, 0, "some tests require more MIR from external crates");
+            assert_eq!(crate_not_found, 0, "some tests require custom external crates");
+        }
     });
     compile_fail(&sysroot);
 }
