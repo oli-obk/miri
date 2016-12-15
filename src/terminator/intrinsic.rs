@@ -22,7 +22,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
         target: mir::BasicBlock,
     ) -> EvalResult<'tcx, ()> {
         let arg_vals: EvalResult<Vec<Value>> = args.iter()
-            .map(|arg| self.eval_operand(arg))
+            .map(|arg| self.eval_operand(arg)?.ok_or(EvalError::ReadUndefBytes))
             .collect();
         let arg_vals = arg_vals?;
         let i32 = self.tcx.types.i32;

@@ -370,9 +370,11 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
 
         for (offset, operand) in offsets.into_iter().zip(operands) {
             let value = self.eval_operand(operand)?;
-            let value_ty = self.operand_ty(operand);
-            let field_dest = dest.offset(offset);
-            self.write_value_to_ptr(value, field_dest, value_ty)?;
+            if let Some(value) = value {
+                let value_ty = self.operand_ty(operand);
+                let field_dest = dest.offset(offset);
+                self.write_value_to_ptr(value, field_dest, value_ty)?;
+            }
         }
         Ok(())
     }
@@ -393,8 +395,9 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
         use rustc::mir::Rvalue::*;
         match *rvalue {
             Use(ref operand) => {
-                let value = self.eval_operand(operand)?;
-                self.write_value(value, dest, dest_ty)?;
+                if let Some(value) = self.eval_operand(operand)? {
+                    self.write_value(value, dest, dest_ty)?;
+                }
             }
 
             BinaryOp(bin_op, ref left, ref right) => {
@@ -456,7 +459,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                             if nndiscr == variant as u64 {
                                 assert_eq!(operands.len(), 1);
                                 let operand = &operands[0];
-                                let value = self.eval_operand(operand)?;
+                                let value = self.eval_operand(operand)?.ok_or(EvalError::ReadUndefBytes)?;
                                 let value_ty = self.operand_ty(operand);
                                 self.write_value(value, dest, value_ty)?;
                             } else {
@@ -516,7 +519,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                     UntaggedUnion { .. } => {
                         assert_eq!(operands.len(), 1);
                         let operand = &operands[0];
-                        let value = self.eval_operand(operand)?;
+                        let value = self.eval_operand(operand)?.ok_or(EvalError::ReadUndefBytes)?;
                         let value_ty = self.operand_ty(operand);
 
                         // FIXME(solson)
@@ -536,20 +539,20 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
             }
 
             Repeat(ref operand, _) => {
-                let (elem_ty, length) = match dest_ty.sty {
-                    ty::TyArray(elem_ty, n) => (elem_ty, n as u64),
-                    _ => bug!("tried to assign array-repeat to non-array type {:?}", dest_ty),
-                };
-                self.inc_step_counter_and_check_limit(length)?;
-                let elem_size = self.type_size(elem_ty)?.expect("repeat element type must be sized");
-                let value = self.eval_operand(operand)?;
+                if let Some(value) = self.eval_operand(operand)? {
+                    let (elem_ty, length) = match dest_ty.sty {
+                        ty::TyArray(elem_ty, n) => (elem_ty, n as u64),
+                        _ => bug!("tried to assign array-repeat to non-array type {:?}", dest_ty),
+                    };
+                    self.inc_step_counter_and_check_limit(length)?;
+                    let elem_size = self.type_size(elem_ty)?.expect("repeat element type must be sized");
+                    // FIXME(solson)
+                    let dest = self.force_allocation(dest)?.to_ptr();
 
-                // FIXME(solson)
-                let dest = self.force_allocation(dest)?.to_ptr();
-
-                for i in 0..length {
-                    let elem_dest = dest.offset(i * elem_size);
-                    self.write_value_to_ptr(value, elem_dest, elem_ty)?;
+                    for i in 0..length {
+                        let elem_dest = dest.offset(i * elem_size);
+                        self.write_value_to_ptr(value, elem_dest, elem_ty)?;
+                    }
                 }
             }
 
@@ -586,13 +589,13 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 use rustc::mir::CastKind::*;
                 match kind {
                     Unsize => {
-                        let src = self.eval_operand(operand)?;
+                        let src = self.eval_operand(operand)?.ok_or(EvalError::ReadUndefBytes)?;
                         let src_ty = self.operand_ty(operand);
                         self.unsize_into(src, src_ty, dest, dest_ty)?;
                     }
 
                     Misc => {
-                        let src = self.eval_operand(operand)?;
+                        let src = self.eval_operand(operand)?.ok_or(EvalError::ReadUndefBytes)?;
                         let src_ty = self.operand_ty(operand);
                         if self.type_is_fat_ptr(src_ty) {
                             trace!("misc cast: {:?}", src);
@@ -624,7 +627,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
 
                     UnsafeFnPointer => match dest_ty.sty {
                         ty::TyFnPtr(unsafe_fn_ty) => {
-                            let src = self.eval_operand(operand)?;
+                            let src = self.eval_operand(operand)?.ok_or(EvalError::ReadUndefBytes)?;
                             let ptr = src.read_ptr(&self.memory)?;
                             let (def_id, substs, _, _) = self.memory.get_fn(ptr.alloc_id)?;
                             let unsafe_fn_ty = self.tcx.erase_regions(&unsafe_fn_ty);
@@ -749,12 +752,12 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
     }
 
     pub(super) fn eval_operand_to_primval(&mut self, op: &mir::Operand<'tcx>) -> EvalResult<'tcx, PrimVal> {
-        let value = self.eval_operand(op)?;
+        let value = self.eval_operand(op)?.ok_or(EvalError::ReadUndefBytes)?;
         let ty = self.operand_ty(op);
         self.value_to_primval(value, ty)
     }
 
-    pub(super) fn eval_operand(&mut self, op: &mir::Operand<'tcx>) -> EvalResult<'tcx, Value> {
+    pub(super) fn eval_operand(&mut self, op: &mir::Operand<'tcx>) -> EvalResult<'tcx, Option<Value>> {
         use rustc::mir::Operand::*;
         match *op {
             Consume(ref lvalue) => self.eval_and_read_lvalue(lvalue),
@@ -775,6 +778,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                                 promoted: None,
                             };
                             self.read_lvalue(Lvalue::Global(cid))?
+                                .expect("constants and statics can't be uninitialized")
                         }
                     }
 
@@ -785,10 +789,11 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                             promoted: Some(index),
                         };
                         self.read_lvalue(Lvalue::Global(cid))?
+                            .expect("promoteds can't be uninitialized")
                     }
                 };
 
-                Ok(value)
+                Ok(Some(value))
             }
         }
     }

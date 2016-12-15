@@ -43,7 +43,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
             }
 
             SwitchInt { ref discr, ref values, ref targets, .. } => {
-                let discr_val = self.eval_and_read_lvalue(discr)?;
+                let discr_val = self.eval_and_read_lvalue(discr)?.ok_or(EvalError::ReadUndefBytes)?;
                 let discr_ty = self.lvalue_ty(discr);
                 let discr_prim = self.value_to_primval(discr_val, discr_ty)?;
 
@@ -216,7 +216,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
             Abi::Rust | Abi::RustCall => {
                 let mut args = Vec::new();
                 for arg in arg_operands {
-                    let arg_val = self.eval_operand(arg)?;
+                    let arg_val = self.eval_operand(arg)?.ok_or(EvalError::ReadUndefBytes)?;
                     let arg_ty = self.operand_ty(arg);
                     args.push((arg_val, arg_ty));
                 }
@@ -353,7 +353,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
             .as_str();
 
         let args_res: EvalResult<Vec<Value>> = args.iter()
-            .map(|arg| self.eval_operand(arg))
+            .map(|arg| self.eval_operand(arg)?.ok_or(EvalError::ReadUndefBytes))
             .collect();
         let args = args_res?;
 
@@ -613,7 +613,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
         match ty.sty {
             // special case `Box` to deallocate the inner allocation
             ty::TyBox(contents_ty) => {
-                let val = self.read_lvalue(lval)?;
+                let val = self.read_lvalue(lval)?.ok_or(EvalError::ReadUndefBytes)?;
                 // we are going through the read_value path, because that already does all the
                 // checks for the trait object types. We'd only be repeating ourselves here.
                 let val = self.follow_by_ref_value(val, ty)?;

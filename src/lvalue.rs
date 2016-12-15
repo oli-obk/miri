@@ -105,13 +105,14 @@ impl<'tcx> Global<'tcx> {
 }
 
 impl<'a, 'tcx> EvalContext<'a, 'tcx> {
-    pub(super) fn eval_and_read_lvalue(&mut self, lvalue: &mir::Lvalue<'tcx>) -> EvalResult<'tcx, Value> {
+    /// if the lvalue is uninitialized, this function returns `None`
+    pub(super) fn eval_and_read_lvalue(&mut self, lvalue: &mir::Lvalue<'tcx>) -> EvalResult<'tcx, Option<Value>> {
         if let mir::Lvalue::Projection(ref proj) = *lvalue {
             if let mir::Lvalue::Local(index) = proj.base {
                 if let Some(Value::ByValPair(a, b)) = self.frame().get_local(index) {
                     if let mir::ProjectionElem::Field(ref field, _) = proj.elem {
                         let val = [a, b][field.index()];
-                        return Ok(Value::ByVal(val));
+                        return Ok(Some(Value::ByVal(val)));
                     }
                 }
             }
@@ -120,20 +121,20 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
         self.read_lvalue(lvalue)
     }
 
-    pub fn read_lvalue(&self, lvalue: Lvalue<'tcx>) -> EvalResult<'tcx, Value> {
+    /// if the lvalue is uninitialized, this function returns `None`
+    pub fn read_lvalue(&self, lvalue: Lvalue<'tcx>) -> EvalResult<'tcx, Option<Value>> {
         match lvalue {
             Lvalue::Ptr { ptr, extra } => {
                 assert_eq!(extra, LvalueExtra::None);
-                Ok(Value::ByRef(ptr))
+                Ok(Some(Value::ByRef(ptr)))
             }
             Lvalue::Local { frame, local } => {
-                self.stack[frame].get_local(local).ok_or(EvalError::ReadUndefBytes)
+                Ok(self.stack[frame].get_local(local))
             }
-            Lvalue::Global(cid) => self.globals
-                                       .get(&cid)
-                                       .expect("global not cached")
-                                       .data
-                                       .ok_or(EvalError::ReadUndefBytes),
+            Lvalue::Global(cid) => Ok(self.globals
+                                          .get(&cid)
+                                          .expect("global not cached")
+                                          .data)
         }
     }
 
@@ -246,7 +247,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
             }
 
             Deref => {
-                let val = self.eval_and_read_lvalue(&proj.base)?;
+                let val = self.eval_and_read_lvalue(&proj.base)?.ok_or(EvalError::ReadUndefBytes)?;
 
                 let pointee_type = match base_ty.sty {
                     ty::TyRawPtr(ty::TypeAndMut{ty, ..}) |
@@ -277,7 +278,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
 
                 let (elem_ty, len) = base.elem_ty_and_len(base_ty);
                 let elem_size = self.type_size(elem_ty)?.expect("slice element must be sized");
-                let n_ptr = self.eval_operand(operand)?;
+                let n_ptr = self.eval_operand(operand)?.ok_or(EvalError::ReadUndefBytes)?;
                 let usize = self.tcx.types.usize;
                 let n = self.value_to_primval(n_ptr, usize)?.to_u64();
                 assert!(n < len);
