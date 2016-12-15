@@ -167,6 +167,22 @@ impl<'a, 'b, 'tcx> ConstantExtractor<'a, 'b, 'tcx> {
                 } else {
                     StackPopCleanup::None
                 };
+                let mut def_id = def_id;
+                let mut substs = substs;
+                if let Some(trait_id) = this.ecx.tcx.trait_of_item(def_id) {
+                    let trait_ref = ty::TraitRef::new(trait_id, substs);
+                    let trait_ref = ty::Binder(trait_ref);
+                    let vtable = this.ecx.fulfill_obligation(trait_ref);
+                    if let traits::VtableImpl(vtable_impl) = vtable {
+                        let name = this.ecx.tcx.item_name(instance.def);
+                        let ac = this.ecx.tcx.associated_items(vtable_impl.impl_def_id)
+                            .find(|item| item.kind == ty::AssociatedKind::Const && item.name == name);
+                        if let Some(ac) = ac {
+                            def_id = ac.def_id;
+                            substs = vtable_impl.substs;
+                        }
+                    }
+                }
                 let mir = this.ecx.load_mir(def_id)?;
                 this.ecx.push_stack_frame(def_id, span, mir, substs, Lvalue::Global(cid), cleanup, Vec::new())
             }
