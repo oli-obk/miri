@@ -7,7 +7,8 @@ extern crate rustc_driver;
 extern crate env_logger;
 extern crate log_settings;
 extern crate syntax;
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 
 use rustc::session::Session;
 use rustc_driver::{Compilation, CompilerCalls};
@@ -94,17 +95,17 @@ fn init_logger() {
             // prepend spaces to indent the final string
             let indentation = log_settings::settings().indentation;
             format!("{lvl}:{module}{depth:2}{indent:<indentation$} {text}",
-                lvl = record.level(),
-                module = record.location().module_path(),
-                depth = indentation / MAX_INDENT,
-                indentation = indentation % MAX_INDENT,
-                indent = "",
-                text = record.args())
+                    lvl = record.level(),
+                    module = record.location().module_path(),
+                    depth = indentation / MAX_INDENT,
+                    indentation = indentation % MAX_INDENT,
+                    indent = "",
+                    text = record.args())
         } else {
             format!("{lvl}:{module}: {text}",
-                lvl = record.level(),
-                module = record.location().module_path(),
-                text = record.args())
+                    lvl = record.level(),
+                    module = record.location().module_path(),
+                    text = record.args())
         }
     };
 
@@ -124,9 +125,11 @@ fn find_sysroot() -> String {
     let toolchain = option_env!("RUSTUP_TOOLCHAIN").or(option_env!("MULTIRUST_TOOLCHAIN"));
     match (home, toolchain) {
         (Some(home), Some(toolchain)) => format!("{}/toolchains/{}", home, toolchain),
-        _ => option_env!("RUST_SYSROOT")
-            .expect("need to specify RUST_SYSROOT env var or use rustup or multirust")
-            .to_owned(),
+        _ => {
+            option_env!("RUST_SYSROOT")
+                .expect("need to specify RUST_SYSROOT env var or use rustup or multirust")
+                .to_owned()
+        },
     }
 }
 

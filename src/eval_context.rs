@@ -51,10 +51,9 @@ pub struct EvalContext<'a, 'tcx: 'a> {
 
 /// A stack frame.
 pub struct Frame<'tcx> {
-    ////////////////////////////////////////////////////////////////////////////////
-    // Function and callsite information
-    ////////////////////////////////////////////////////////////////////////////////
-
+    /// /////////////////////////////////////////////////////////////////////////////
+    /// Function and callsite information
+    /// /////////////////////////////////////////////////////////////////////////////
     /// The MIR for the function called on this frame.
     pub mir: MirRef<'tcx>,
 
@@ -67,10 +66,9 @@ pub struct Frame<'tcx> {
     /// The span of the call site.
     pub span: codemap::Span,
 
-    ////////////////////////////////////////////////////////////////////////////////
-    // Return lvalue and locals
-    ////////////////////////////////////////////////////////////////////////////////
-
+    /// /////////////////////////////////////////////////////////////////////////////
+    /// Return lvalue and locals
+    /// /////////////////////////////////////////////////////////////////////////////
     /// The block to return to when returning from the current stack frame
     pub return_to_block: StackPopCleanup,
 
@@ -90,10 +88,9 @@ pub struct Frame<'tcx> {
     /// The memory will be freed when the stackframe finishes
     pub interpreter_temporaries: Vec<Pointer>,
 
-    ////////////////////////////////////////////////////////////////////////////////
-    // Current position within the function
-    ////////////////////////////////////////////////////////////////////////////////
-
+    /// /////////////////////////////////////////////////////////////////////////////
+    /// Current position within the function
+    /// /////////////////////////////////////////////////////////////////////////////
     /// The block that is currently executed (or will be executed after the above call stacks
     /// return).
     pub block: mir::BasicBlock,
@@ -190,8 +187,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
 
             Float(ConstFloat::F32(f)) => PrimVal::from_f32(f),
             Float(ConstFloat::F64(f)) => PrimVal::from_f64(f),
-            Float(ConstFloat::FInfer { .. }) =>
-                bug!("uninferred constants only exist before typeck"),
+            Float(ConstFloat::FInfer { .. }) => bug!("uninferred constants only exist before typeck"),
 
             Bool(b) => PrimVal::from_bool(b),
             Char(c) => PrimVal::from_char(c),
@@ -203,14 +199,14 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 self.memory.write_bytes(ptr, bs)?;
                 self.memory.freeze(ptr.alloc_id)?;
                 PrimVal::Ptr(ptr)
-            }
+            },
 
-            Struct(_)    => unimplemented!(),
-            Tuple(_)     => unimplemented!(),
-            Function(_)  => unimplemented!(),
-            Array(_, _)  => unimplemented!(),
+            Struct(_) => unimplemented!(),
+            Tuple(_) => unimplemented!(),
+            Function(_) => unimplemented!(),
+            Array(_, _) => unimplemented!(),
             Repeat(_, _) => unimplemented!(),
-            Dummy        => unimplemented!(),
+            Dummy => unimplemented!(),
         };
 
         Ok(Value::ByVal(primval))
@@ -269,9 +265,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
         // TODO(solson): Is this inefficient? Needs investigation.
         let ty = self.monomorphize(ty, substs);
 
-        self.tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| {
-            ty.layout(&infcx).map_err(EvalError::Layout)
-        })
+        self.tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| ty.layout(&infcx).map_err(EvalError::Layout))
     }
 
     pub fn push_stack_frame(
@@ -315,27 +309,32 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
         ::log_settings::settings().indentation -= 1;
         let frame = self.stack.pop().expect("tried to pop a stack frame, but there were none");
         match frame.return_to_block {
-            StackPopCleanup::Freeze => if let Lvalue::Global(id) = frame.return_lvalue {
-                let global_value = self.globals.get_mut(&id)
-                    .expect("global should have been cached (freeze)");
-                match global_value.value {
-                    Value::ByRef(ptr) => self.memory.freeze(ptr.alloc_id)?,
-                    Value::ByVal(val) => if let PrimVal::Ptr(ptr) = val {
-                        self.memory.freeze(ptr.alloc_id)?;
-                    },
-                    Value::ByValPair(val1, val2) => {
-                        if let PrimVal::Ptr(ptr) = val1 {
-                            self.memory.freeze(ptr.alloc_id)?;
-                        }
-                        if let PrimVal::Ptr(ptr) = val2 {
-                            self.memory.freeze(ptr.alloc_id)?;
-                        }
-                    },
+            StackPopCleanup::Freeze => {
+                if let Lvalue::Global(id) = frame.return_lvalue {
+                    let global_value = self.globals
+                        .get_mut(&id)
+                        .expect("global should have been cached (freeze)");
+                    match global_value.value {
+                        Value::ByRef(ptr) => self.memory.freeze(ptr.alloc_id)?,
+                        Value::ByVal(val) => {
+                            if let PrimVal::Ptr(ptr) = val {
+                                self.memory.freeze(ptr.alloc_id)?;
+                            }
+                        },
+                        Value::ByValPair(val1, val2) => {
+                            if let PrimVal::Ptr(ptr) = val1 {
+                                self.memory.freeze(ptr.alloc_id)?;
+                            }
+                            if let PrimVal::Ptr(ptr) = val2 {
+                                self.memory.freeze(ptr.alloc_id)?;
+                            }
+                        },
+                    }
+                    assert!(global_value.mutable);
+                    global_value.mutable = false;
+                } else {
+                    bug!("StackPopCleanup::Freeze on: {:?}", frame.return_lvalue);
                 }
-                assert!(global_value.mutable);
-                global_value.mutable = false;
-            } else {
-                bug!("StackPopCleanup::Freeze on: {:?}", frame.return_lvalue);
             },
             StackPopCleanup::Goto(target) => self.goto_block(target),
             StackPopCleanup::None => {},
@@ -426,22 +425,22 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
             Use(ref operand) => {
                 let value = self.eval_operand(operand)?;
                 self.write_value(value, dest, dest_ty)?;
-            }
+            },
 
             BinaryOp(bin_op, ref left, ref right) => {
                 // ignore overflow bit, rustc inserts check branches for us
                 self.intrinsic_overflowing(bin_op, left, right, dest, dest_ty)?;
-            }
+            },
 
             CheckedBinaryOp(bin_op, ref left, ref right) => {
                 self.intrinsic_with_overflow(bin_op, left, right, dest, dest_ty)?;
-            }
+            },
 
             UnaryOp(un_op, ref operand) => {
                 let val = self.eval_operand_to_primval(operand)?;
                 let kind = self.ty_to_primval_kind(dest_ty)?;
                 self.write_primval(dest, operator::unary_op(un_op, val, kind)?, dest_ty)?;
-            }
+            },
 
             Aggregate(ref kind, ref operands) => {
                 self.inc_step_counter_and_check_limit(operands.len() as u64)?;
