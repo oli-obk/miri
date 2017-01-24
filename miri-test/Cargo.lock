@@ -1,0 +1,11 @@
+[root]
+name = "miri-test"
+version = "0.1.0"
+dependencies = [
+ "deptestdep 0.1.0",
+]
+
+[[package]]
+name = "deptestdep"
+version = "0.1.0"
+

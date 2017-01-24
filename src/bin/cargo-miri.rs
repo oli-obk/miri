@@ -84,19 +84,16 @@ fn main() {
         let package = metadata.packages.remove(package_index);
         for target in package.targets {
             let args = std::env::args().skip(skip);
-            if test && target.kind.get(0).map_or(false, |kind| kind == "test") {
-                if let Err(code) = process(vec!["--test".to_string(), target.name].into_iter().chain(args),
+            let kind = target.kind.get(0).expect("badly formatted cargo metadata: target::kind is an empty array");
+            if test && (kind == "test" || kind == "example") {
+                if let Err(code) = process(vec![format!("--{}", kind), target.name].into_iter().chain(args),
                                            &dep_path) {
                     std::process::exit(code);
                 }
-            } else if !test {
-                if target.kind.get(0).map_or(false, |kind| kind == "bin") {
-                    if let Err(code) = process(vec!["--bin".to_string(), target.name].into_iter().chain(args),
-                                               &dep_path) {
-                        std::process::exit(code);
-                    }
-                } else {
-                    panic!("badly formatted cargo metadata: target::kind is an empty array");
+            } else if !test && kind == "bin" {
+                if let Err(code) = process(vec!["--bin".to_string(), target.name].into_iter().chain(args),
+                                           &dep_path) {
+                    std::process::exit(code);
                 }
             }
         }
@@ -122,28 +119,20 @@ fn main() {
                 .expect("need to specify SYSROOT env var during miri compilation, or use rustup or multirust")
         };
 
-        // this conditional check for the --sysroot flag is there so users can call `cargo-clippy` directly
+        // this conditional check for the --sysroot flag is there so users can call `cargo-miri` directly
         // without having to pass --sysroot or anything
-        let mut args: Vec<String> = if std::env::args().any(|s| s == "--sysroot") {
+        let args: Vec<String> = if std::env::args().any(|s| s == "--sysroot") {
             std::env::args().skip(1).collect()
         } else {
             std::env::args().skip(1).chain(Some("--sysroot".to_owned())).chain(Some(sys_root)).collect()
         };
 
-        // this check ensures that dependencies are built but not interpreted and the final crate is
-        // interpreted but not built
-        let miri_enabled = std::env::args().any(|s| s == "-Zno-trans");
-
-        if miri_enabled {
-            args.extend_from_slice(&["--cfg".to_owned(), r#"feature="cargo-miri""#.to_owned()]);
-        }
-
         let mut path = std::env::current_exe().expect("current executable path invalid");
         path.set_file_name("miri");
 
-        match Command::new(path).args(&args).status() {
-            Ok(exit) => if !exit.success() {
-                std::process::exit(exit.code().unwrap_or(42));
+        match Command::new(path).args(&args).env("MIRI_HOST_TARGET", "yes").status() {
+            Ok(status) => if !status.success() {
+                std::process::exit(status.code().unwrap_or(42));
             },
             Err(e) => panic!("error during miri run: {:?}", e),
         }
@@ -166,7 +155,6 @@ fn process<P, I>(old_args: I, dep_path: P) -> Result<(), i32>
     }
     args.push("-L".to_owned());
     args.push(dep_path.as_ref().to_string_lossy().into_owned());
-    args.push("-Zno-trans".to_owned());
     args.push("--cfg".to_owned());
     args.push(r#"feature="cargo-miri""#.to_owned());
 

@@ -18,32 +18,6 @@ fn compile_fail(sysroot: &Path) {
     });
 }
 
-fn run_pass() {
-    let mut config = compiletest::default_config();
-    config.mode = "run-pass".parse().expect("Invalid mode");
-    config.src_base = PathBuf::from("tests/run-pass".to_string());
-    config.target_rustcflags = Some("-Dwarnings".to_string());
-    config.host_rustcflags = Some("-Dwarnings".to_string());
-    compiletest::run_tests(&config);
-}
-
-fn miri_pass(path: &str, target: &str, host: &str) {
-    let mut config = compiletest::default_config();
-    config.mode = "mir-opt".parse().expect("Invalid mode");
-    config.src_base = PathBuf::from(path);
-    config.target = target.to_owned();
-    config.host = host.to_owned();
-    config.rustc_path = PathBuf::from("target/debug/miri");
-    // don't actually execute the final binary, it might be for other targets and we only care
-    // about running miri, not the binary.
-    config.runtool = Some("echo \"\" || ".to_owned());
-    if target == host {
-        std::env::set_var("MIRI_HOST_TARGET", "yes");
-    }
-    compiletest::run_tests(&config);
-    std::env::set_var("MIRI_HOST_TARGET", "");
-}
-
 fn is_target_dir<P: Into<PathBuf>>(path: P) -> bool {
     let mut path = path.into();
     path.push("lib");
@@ -73,20 +47,5 @@ fn compile_test() {
         .stdout;
     let sysroot = std::str::from_utf8(&sysroot).expect("sysroot is not utf8").trim();
     let sysroot = &Path::new(&sysroot);
-    let host = std::process::Command::new("rustc")
-        .arg("-vV")
-        .output()
-        .expect("rustc not found for -vV")
-        .stdout;
-    let host = std::str::from_utf8(&host).expect("sysroot is not utf8");
-    let host = host.split("\nhost: ").skip(1).next().expect("no host: part in rustc -vV");
-    let host = host.split("\n").next().expect("no \n after host");
-    run_pass();
-    for_all_targets(&sysroot, |target| {
-        miri_pass("tests/run-pass", &target, host);
-        if let Ok(path) = std::env::var("MIRI_RUSTC_TEST") {
-            miri_pass(&path, &target, host);
-        }
-    });
     compile_fail(&sysroot);
 }
