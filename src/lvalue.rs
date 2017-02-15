@@ -195,6 +195,19 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 (Size::from_bytes(field * elem_size), false)
             }
 
+            // We treat arrays + fixed sized indexing like field accesses
+            Array { .. } => {
+                let field = field_index as u64;
+                let elem_size = match base_ty.sty {
+                    ty::TyArray(elem_ty, n) => {
+                        assert!(field < n as u64);
+                        self.type_size(elem_ty)?.expect("array elements are sized") as u64
+                    },
+                    _ => bug!("lvalue_field: got Array layout but non-array type {:?}", base_ty),
+                };
+                (Size::from_bytes(field * elem_size), false)
+            }
+
             _ => bug!("field access on non-product type: {:?}", base_layout),
         };
 
@@ -205,11 +218,21 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                     assert!(field.is_none(), "local can't be ByRef and have a field offset");
                     (ptr, LvalueExtra::None)
                 },
+                Value::ByVal(PrimVal::Undef) => {
+                    // FIXME: add some logic for when to not allocate
+                    (self.force_allocation(base)?.to_ptr(), LvalueExtra::None)
+                },
                 Value::ByVal(_) => {
-                    assert_eq!(offset.bytes(), 0, "ByVal can only have 1 non zst field with offset 0");
+                    assert_eq!(field_index, 0, "ByVal can only have 1 non zst field with offset 0");
                     return Ok(base);
                 },
                 Value::ByValPair(_, _) => {
+                    let field_count = self.get_field_count(base_ty)?;
+                    if field_count == 1 {
+                        assert_eq!(field_index, 0, "{:?} has only one field", base_ty);
+                        return Ok(base);
+                    }
+                    assert_eq!(field_count, 2);
                     assert!(field_index < 2);
                     return Ok(Lvalue::Local {
                         frame,
