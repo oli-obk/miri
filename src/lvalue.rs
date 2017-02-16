@@ -170,8 +170,10 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
             General { ref variants, .. } => {
                 let (_, base_extra) = base.to_ptr_and_extra();
                 if let LvalueExtra::DowncastVariant(variant_idx) = base_extra {
+                    // enums can't be packed
+                    assert!(!variants[variant_idx].packed);
                     // +1 for the discriminant, which is field 0
-                    (variants[variant_idx].offsets[field_index + 1], variants[variant_idx].packed)
+                    (variants[variant_idx].offsets[field_index + 1], false)
                 } else {
                     bug!("field access on enum had no variant index");
                 }
