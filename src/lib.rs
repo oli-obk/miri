@@ -29,6 +29,7 @@ mod eval_context;
 mod lvalue;
 mod memory;
 mod operator;
+mod rvalue;
 mod step;
 mod terminator;
 mod traits;

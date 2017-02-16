@@ -18,6 +18,7 @@ use lvalue::{Global, GlobalId, Lvalue, LvalueExtra};
 use memory::{Memory, Pointer};
 use operator;
 use value::{PrimVal, PrimValKind, Value, ValueKind};
+use rvalue::Rvalue;
 
 pub type MirRef<'tcx> = Ref<'tcx, mir::Mir<'tcx>>;
 
@@ -868,24 +869,23 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
         self.value_to_primval(value, ty)
     }
 
-    pub(super) fn eval_operand(&mut self, op: &mir::Operand<'tcx>) -> EvalResult<'tcx, Value> {
+    pub(super) fn eval_operand_to_rvalue(&mut self, op: &mir::Operand<'tcx>) -> EvalResult<'tcx, Rvalue<'tcx>> {
         use rustc::mir::Operand::*;
         match *op {
-            Consume(ref lvalue) => self.eval_and_read_lvalue(lvalue),
+            Consume(ref lvalue) => self.eval_lvalue(lvalue).map(Rvalue::Lvalue),
 
             Constant(mir::Constant { ref literal, ty, .. }) => {
                 use rustc::mir::Literal;
-                let value = match *literal {
-                    Literal::Value { ref value } => self.const_to_value(value)?,
+                match *literal {
+                    Literal::Value { ref value } => self.const_to_value(value).map(Rvalue::Value),
 
                     Literal::Item { def_id, substs } => {
                         if let ty::TyFnDef(..) = ty.sty {
-                            // function items are zero sized
-                            Value::ByRef(self.memory.allocate(0, 0)?)
+                            Ok(Rvalue::Value(Value::ByVal(PrimVal::Undef)))
                         } else {
                             let (def_id, substs) = self.resolve_associated_const(def_id, substs);
                             let cid = GlobalId { def_id, substs, promoted: None };
-                            self.globals.get(&cid).expect("static/const not cached").value
+                            Ok(Rvalue::Lvalue(Lvalue::Global(cid)))
                         }
                     }
 
@@ -895,13 +895,16 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                             substs: self.substs(),
                             promoted: Some(index),
                         };
-                        self.globals.get(&cid).expect("promoted not cached").value
+                        Ok(Rvalue::Lvalue(Lvalue::Global(cid)))
                     }
-                };
-
-                Ok(value)
+                }
             }
         }
+    }
+
+    pub(super) fn eval_operand(&mut self, op: &mir::Operand<'tcx>) -> EvalResult<'tcx, Value> {
+        let rvalue = self.eval_operand_to_rvalue(op)?;
+        Ok(self.read_rvalue(rvalue))
     }
 
     pub(super) fn operand_ty(&self, operand: &mir::Operand<'tcx>) -> Ty<'tcx> {
