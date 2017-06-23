@@ -160,7 +160,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 // Integer pointers never alias real pointers
                 Eq if (left.is_ptr() && !right.is_ptr()) || (!left.is_ptr() && right.is_ptr()) => return Ok((PrimVal::from_bool(false), false)),
                 Ne if (left.is_ptr() && !right.is_ptr()) || (!left.is_ptr() && right.is_ptr()) => return Ok((PrimVal::from_bool(true), false)),
-                // These need both pointers to be in the same allocation
+
                 Eq | Ne | Lt | Le | Gt | Ge | Sub
                 if left_kind == right_kind
                 && (left_kind == Ptr || left_kind == FnPtr || left_kind == usize || left_kind == isize)
@@ -172,6 +172,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                         assert_eq!(right.offset, 0);
                     }
                     if left.alloc_id == right.alloc_id {
+                        // These need both pointers to be in the same allocation
                         let res = match bin_op {
                             Eq => left.offset == right.offset,
                             Ne => left.offset != right.offset,
@@ -186,6 +187,17 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                         };
                         return Ok((PrimVal::from_bool(res), false));
                     } else {
+                        // Pointers into the heap are comparable if they point to different allocations
+                        // or if one pointer points to the heap while the other doesn't
+                        let left_alloc = self.memory.get(left.alloc_id)?;
+                        let right_alloc = self.memory.get(right.alloc_id)?;
+                        if left_alloc.heap || right_alloc.heap {
+                            match bin_op {
+                                Eq => return Ok((PrimVal::from_bool(false), false)),
+                                Ne => return Ok((PrimVal::from_bool(true), false)),
+                                _ => {},
+                            }
+                        }
                         // Both are pointers, but from different allocations.
                         return Err(EvalError::InvalidPointerMath);
                     }

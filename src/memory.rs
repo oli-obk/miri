@@ -37,6 +37,10 @@ pub struct Allocation {
     /// Use the `mark_static_initalized` method of `Memory` to ensure that an error occurs, if the memory of this
     /// allocation is modified or deallocated in the future.
     pub static_kind: StaticKind,
+    /// Whether the allocation is on the heap.
+    /// This is used for doing sanity checks to prevent code from deallocating stack
+    /// allocations manually or comparing pointers to the stack
+    pub heap: bool,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -188,14 +192,14 @@ impl<'a, 'tcx> Memory<'a, 'tcx> {
             return Ok(Pointer::new(alloc_id, 0));
         }
 
-        let ptr = self.allocate(bytes.len() as u64, 1)?;
+        let ptr = self.allocate(bytes.len() as u64, 1, false)?;
         self.write_bytes(ptr, bytes)?;
         self.mark_static_initalized(ptr.alloc_id, false)?;
         self.literal_alloc_cache.insert(bytes.to_vec(), ptr.alloc_id);
         Ok(ptr)
     }
 
-    pub fn allocate(&mut self, size: u64, align: u64) -> EvalResult<'tcx, Pointer> {
+    pub fn allocate(&mut self, size: u64, align: u64, heap: bool) -> EvalResult<'tcx, Pointer> {
         assert_ne!(align, 0);
         assert!(align.is_power_of_two());
 
@@ -214,6 +218,7 @@ impl<'a, 'tcx> Memory<'a, 'tcx> {
             undef_mask: UndefMask::new(size),
             align,
             static_kind: StaticKind::NotStatic,
+            heap,
         };
         let id = self.next_id;
         self.next_id.0 += 1;
@@ -221,11 +226,8 @@ impl<'a, 'tcx> Memory<'a, 'tcx> {
         Ok(Pointer::new(id, 0))
     }
 
-    // TODO(solson): Track which allocations were returned from __rust_allocate and report an error
-    // when reallocating/deallocating any others.
     pub fn reallocate(&mut self, ptr: Pointer, new_size: u64, align: u64) -> EvalResult<'tcx, Pointer> {
         assert!(align.is_power_of_two());
-        // TODO(solson): Report error about non-__rust_allocate'd pointer.
         if ptr.offset != 0 {
             return Err(EvalError::Unimplemented(format!("bad pointer offset: {}", ptr.offset)));
         }
@@ -239,6 +241,9 @@ impl<'a, 'tcx> Memory<'a, 'tcx> {
             let amount = new_size - size;
             self.memory_usage += amount;
             let alloc = self.get_mut(ptr.alloc_id)?;
+            if !alloc.heap {
+                return Err(EvalError::ReallocateStackSpace);
+            }
             // FIXME: check alignment here
             assert_eq!(amount as usize as u64, amount);
             alloc.bytes.extend(iter::repeat(0).take(amount as usize));
@@ -247,6 +252,9 @@ impl<'a, 'tcx> Memory<'a, 'tcx> {
             self.memory_usage -= size - new_size;
             self.clear_relocations(ptr.offset(new_size, self.layout)?, size - new_size)?;
             let alloc = self.get_mut(ptr.alloc_id)?;
+            if !alloc.heap {
+                return Err(EvalError::ReallocateStackSpace);
+            }
             // FIXME: check alignment here
             // `as usize` is fine here, since it is smaller than `size`, which came from a usize
             alloc.bytes.truncate(new_size as usize);
@@ -257,8 +265,7 @@ impl<'a, 'tcx> Memory<'a, 'tcx> {
         Ok(Pointer::new(ptr.alloc_id, 0))
     }
 
-    // TODO(solson): See comment on `reallocate`.
-    pub fn deallocate(&mut self, ptr: Pointer) -> EvalResult<'tcx> {
+    pub fn deallocate(&mut self, ptr: Pointer, heap: bool) -> EvalResult<'tcx> {
         if ptr.offset != 0 {
             // TODO(solson): Report error about non-__rust_allocate'd pointer.
             return Err(EvalError::Unimplemented(format!("bad pointer offset: {}", ptr.offset)));
@@ -268,6 +275,10 @@ impl<'a, 'tcx> Memory<'a, 'tcx> {
         }
 
         if let Some(alloc) = self.alloc_map.remove(&ptr.alloc_id) {
+            if !alloc.heap && heap {
+                return Err(EvalError::DeallocateStackSpace);
+            }
+            assert_eq!(alloc.heap, heap, "a heap allocation ended up on the stack");
             self.memory_usage -= alloc.bytes.len() as u64;
         } else {
             debug!("deallocated a pointer twice: {}", ptr.alloc_id);

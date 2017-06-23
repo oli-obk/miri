@@ -247,7 +247,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
 
             "init" => {
                 let size = self.type_size(dest_ty)?.expect("cannot zero unsized value");
-                let init = |this: &mut Self, val: Value| {
+                let init = |this: &mut Self, val: Value, heap: bool| {
                     let zero_val = match val {
                         Value::ByRef(ptr) => {
                             this.memory.write_repeat(ptr, 0, size)?;
@@ -257,7 +257,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                         Value::ByVal(PrimVal::Undef) => match this.ty_to_primval_kind(dest_ty) {
                             Ok(_) => Value::ByVal(PrimVal::Bytes(0)),
                             Err(_) => {
-                                let ptr = this.alloc_ptr_with_substs(dest_ty, substs)?;
+                                let ptr = this.alloc_ptr_with_substs(dest_ty, substs, heap)?;
                                 this.memory.write_repeat(ptr, 0, size)?;
                                 Value::ByRef(ptr)
                             }
@@ -269,10 +269,10 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                     Ok(zero_val)
                 };
                 match dest {
-                    Lvalue::Local { frame, local, field } => self.modify_local(frame, local, field.map(|(i, _)| i), init)?,
+                    Lvalue::Local { frame, local, field } => self.modify_local(frame, local, field.map(|(i, _)| i), |this, val| init(this, val, false))?,
                     Lvalue::Ptr { ptr, extra: LvalueExtra::None } => self.memory.write_repeat(ptr.to_ptr()?, 0, size)?,
                     Lvalue::Ptr { .. } => bug!("init intrinsic tried to write to fat ptr target"),
-                    Lvalue::Global(cid) => self.modify_global(cid, init)?,
+                    Lvalue::Global(cid) => self.modify_global(cid, |this, val| init(this, val, true))?,
                 }
             }
 

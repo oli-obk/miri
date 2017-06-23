@@ -61,6 +61,8 @@ pub enum EvalError<'tcx> {
     Layout(layout::LayoutError<'tcx>),
     HeapAllocZeroBytes,
     HeapAllocNonPowerOfTwoAlignment(u64),
+    ReallocateStackSpace,
+    DeallocateStackSpace,
     Unreachable,
     Panic,
 }
@@ -152,6 +154,10 @@ impl<'tcx> Error for EvalError<'tcx> {
                 "tried to re-, de- or allocate zero bytes on the heap",
             EvalError::HeapAllocNonPowerOfTwoAlignment(_) =>
                 "tried to re-, de-, or allocate heap memory with alignment that is not a power of two",
+            EvalError::ReallocateStackSpace =>
+                "tried to reallocate memory on the stack",
+            EvalError::DeallocateStackSpace =>
+                "tried to deallocate memory on the stack",
             EvalError::Unreachable =>
                 "entered unreachable code",
             EvalError::Panic =>

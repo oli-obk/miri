@@ -142,19 +142,20 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
         }
     }
 
-    pub fn alloc_ptr(&mut self, ty: Ty<'tcx>) -> EvalResult<'tcx, Pointer> {
+    pub fn alloc_ptr(&mut self, ty: Ty<'tcx>, heap: bool) -> EvalResult<'tcx, Pointer> {
         let substs = self.substs();
-        self.alloc_ptr_with_substs(ty, substs)
+        self.alloc_ptr_with_substs(ty, substs, heap)
     }
 
     pub fn alloc_ptr_with_substs(
         &mut self,
         ty: Ty<'tcx>,
-        substs: &'tcx Substs<'tcx>
+        substs: &'tcx Substs<'tcx>,
+        heap: bool,
     ) -> EvalResult<'tcx, Pointer> {
         let size = self.type_size_with_substs(ty, substs)?.expect("cannot alloc memory for unsized type");
         let align = self.type_align_with_substs(ty, substs)?;
-        self.memory.allocate(size, align)
+        self.memory.allocate(size, align, heap)
     }
 
     pub fn memory(&self) -> &Memory<'a, 'tcx> {
@@ -396,7 +397,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
         if let Some(Value::ByRef(ptr)) = local {
             trace!("deallocating local");
             self.memory.dump_alloc(ptr.alloc_id);
-            match self.memory.deallocate(ptr) {
+            match self.memory.deallocate(ptr, false) {
                 // We could alternatively check whether the alloc_id is static before calling
                 // deallocate, but this is much simpler and is probably the rare case.
                 Ok(()) | Err(EvalError::DeallocatedStaticMemory) => {},
@@ -682,7 +683,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                     let align = self.type_align(ty)?;
                     self.write_primval(dest, PrimVal::Bytes(align.into()), dest_ty)?;
                 } else {
-                    let ptr = self.alloc_ptr(ty)?;
+                    let ptr = self.alloc_ptr(ty, true)?;
                     self.write_primval(dest, PrimVal::Ptr(ptr), dest_ty)?;
                 }
             }
@@ -992,7 +993,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                         let ty = self.stack[frame].mir.local_decls[local].ty;
                         let ty = self.monomorphize(ty, self.stack[frame].instance.substs);
                         let substs = self.stack[frame].instance.substs;
-                        let ptr = self.alloc_ptr_with_substs(ty, substs)?;
+                        let ptr = self.alloc_ptr_with_substs(ty, substs, false)?;
                         self.stack[frame].locals[local.index() - 1] = Some(Value::ByRef(ptr)); // it stays live
                         self.write_value_to_ptr(val, PrimVal::Ptr(ptr), ty)?;
                         let lval = Lvalue::from_ptr(ptr);
@@ -1010,7 +1011,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 match global_val.value {
                     Value::ByRef(ptr) => Lvalue::from_ptr(ptr),
                     _ => {
-                        let ptr = self.alloc_ptr_with_substs(global_val.ty, cid.instance.substs)?;
+                        let ptr = self.alloc_ptr_with_substs(global_val.ty, cid.instance.substs, true)?;
                         self.memory.mark_static(ptr.alloc_id);
                         self.write_value_to_ptr(global_val.value, PrimVal::Ptr(ptr), global_val.ty)?;
                         // see comment on `initialized` field
@@ -1132,7 +1133,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
             if let Ok(Some(src_val)) = self.try_read_value(src_ptr, dest_ty) {
                 write_dest(self, src_val)?;
             } else {
-                let dest_ptr = self.alloc_ptr(dest_ty)?;
+                let dest_ptr = self.alloc_ptr(dest_ty, false)?;
                 self.copy(PrimVal::Ptr(src_ptr), PrimVal::Ptr(dest_ptr), dest_ty)?;
                 write_dest(self, Value::ByRef(dest_ptr))?;
             }
@@ -1670,7 +1671,7 @@ pub fn eval_main<'a, 'tcx: 'a>(
             }
 
             // Return value
-            let ret_ptr = ecx.memory.allocate(ecx.tcx.data_layout.pointer_size.bytes(), ecx.tcx.data_layout.pointer_align.abi())?;
+            let ret_ptr = ecx.memory.allocate(ecx.tcx.data_layout.pointer_size.bytes(), ecx.tcx.data_layout.pointer_align.abi(), false)?;
             cleanup_ptr = Some(ret_ptr);
 
             // Push our stack frame
@@ -1712,7 +1713,7 @@ pub fn eval_main<'a, 'tcx: 'a>(
 
         while ecx.step()? {}
         if let Some(cleanup_ptr) = cleanup_ptr {
-            ecx.memory.deallocate(cleanup_ptr)?;
+            ecx.memory.deallocate(cleanup_ptr, false)?;
         }
         return Ok(());
     }

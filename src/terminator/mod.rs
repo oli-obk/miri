@@ -565,7 +565,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                     self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
                 } else {
                     let align = self.memory.pointer_size();
-                    let ptr = self.memory.allocate(size, align)?;
+                    let ptr = self.memory.allocate(size, align, true)?;
                     self.write_primval(dest, PrimVal::Ptr(ptr), dest_ty)?;
                 }
             }
@@ -573,7 +573,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
             "free" => {
                 let ptr = args[0].read_ptr(&self.memory)?;
                 if !ptr.is_null()? {
-                    self.memory.deallocate(ptr.to_ptr()?)?;
+                    self.memory.deallocate(ptr.to_ptr()?, true)?;
                 }
             }
 
@@ -602,7 +602,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 if !align.is_power_of_two() {
                     return Err(EvalError::HeapAllocNonPowerOfTwoAlignment(align));
                 }
-                let ptr = self.memory.allocate(size, align)?;
+                let ptr = self.memory.allocate(size, align, true)?;
                 self.write_primval(dest, PrimVal::Ptr(ptr), dest_ty)?;
             }
 
@@ -615,7 +615,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 if !align.is_power_of_two() {
                     return Err(EvalError::HeapAllocNonPowerOfTwoAlignment(align));
                 }
-                let ptr = self.memory.allocate(size, align)?;
+                let ptr = self.memory.allocate(size, align, true)?;
                 self.memory.write_repeat(ptr, 0, size)?;
                 self.write_primval(dest, PrimVal::Ptr(ptr), dest_ty)?;
             }
@@ -631,7 +631,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 if !align.is_power_of_two() {
                     return Err(EvalError::HeapAllocNonPowerOfTwoAlignment(align));
                 }
-                self.memory.deallocate(ptr)?;
+                self.memory.deallocate(ptr, true)?;
             },
 
             "__rust_reallocate" => {
@@ -752,7 +752,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 }
                 if let Some(old) = success {
                     if let Some(var) = old {
-                        self.memory.deallocate(var)?;
+                        self.memory.deallocate(var, true)?;
                     }
                     self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
                 } else {
@@ -775,11 +775,11 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 }
                 if let Some((name, value)) = new {
                     // +1 for the null terminator
-                    let value_copy = self.memory.allocate((value.len() + 1) as u64, 1)?;
+                    let value_copy = self.memory.allocate((value.len() + 1) as u64, 1, true)?;
                     self.memory.write_bytes(value_copy, &value)?;
                     self.memory.write_bytes(value_copy.offset(value.len() as u64, self.memory.layout)?, &[0])?;
                     if let Some(var) = self.env_vars.insert(name.to_owned(), value_copy) {
-                        self.memory.deallocate(var)?;
+                        self.memory.deallocate(var, true)?;
                     }
                     self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
                 } else {
