@@ -157,13 +157,6 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                     let ptr = self.pointer_offset(left, pointee_ty, right.to_bytes()? as i64)?;
                     return Ok((ptr, false));
                 },
-                // These work on anything
-                Eq if left_kind == right_kind => {
-                    return Ok((PrimVal::from_bool(left == right), false));
-                }
-                Ne if left_kind == right_kind => {
-                    return Ok((PrimVal::from_bool(left != right), false));
-                }
                 // These need both pointers to be in the same allocation
                 Lt | Le | Gt | Ge | Sub
                 if left_kind == right_kind
