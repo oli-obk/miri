@@ -157,15 +157,24 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                     let ptr = self.pointer_offset(left, pointee_ty, right.to_bytes()? as i64)?;
                     return Ok((ptr, false));
                 },
+                // Integer pointers never alias real pointers
+                Eq if (left.is_ptr() && !right.is_ptr()) || (!left.is_ptr() && right.is_ptr()) => return Ok((PrimVal::from_bool(false), false)),
+                Ne if (left.is_ptr() && !right.is_ptr()) || (!left.is_ptr() && right.is_ptr()) => return Ok((PrimVal::from_bool(true), false)),
                 // These need both pointers to be in the same allocation
-                Lt | Le | Gt | Ge | Sub
+                Eq | Ne | Lt | Le | Gt | Ge | Sub
                 if left_kind == right_kind
-                && (left_kind == Ptr || left_kind == usize || left_kind == isize)
+                && (left_kind == Ptr || left_kind == FnPtr || left_kind == usize || left_kind == isize)
                 && left.is_ptr() && right.is_ptr() => {
                     let left = left.to_ptr()?;
                     let right = right.to_ptr()?;
+                    if left_kind == FnPtr {
+                        assert_eq!(left.offset, 0);
+                        assert_eq!(right.offset, 0);
+                    }
                     if left.alloc_id == right.alloc_id {
                         let res = match bin_op {
+                            Eq => left.offset == right.offset,
+                            Ne => left.offset != right.offset,
                             Lt => left.offset < right.offset,
                             Le => left.offset <= right.offset,
                             Gt => left.offset > right.offset,
@@ -243,6 +252,8 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
             (Div, F64) => f64_arithmetic!(/, l, r),
             (Rem, F64) => f64_arithmetic!(%, l, r),
 
+            (Ne, _) => PrimVal::from_bool(l != r),
+            (Eq, _) => PrimVal::from_bool(l == r),
             (Lt, k) if k.is_signed_int() => PrimVal::from_bool((l as i128) < (r as i128)),
             (Lt, _) => PrimVal::from_bool(l <  r),
             (Le, k) if k.is_signed_int() => PrimVal::from_bool((l as i128) <= (r as i128)),
