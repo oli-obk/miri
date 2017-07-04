@@ -578,7 +578,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
             "malloc" => {
                 let size = self.value_to_primval(args[0], usize)?.to_u64()?;
                 if size == 0 {
-                    self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
+                    self.write_null(dest, dest_ty)?;
                 } else {
                     let align = self.memory.pointer_size();
                     let ptr = self.memory.allocate(size, align)?;
@@ -671,7 +671,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 let f = args[0].read_ptr(&self.memory)?.to_ptr()?;
                 let data = args[1].read_ptr(&self.memory)?;
                 let f_instance = self.memory.get_fn(f)?;
-                self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
+                self.write_null(dest, dest_ty)?;
 
                 // Now we make a function call.  TODO: Consider making this re-usable?  EvalContext::step does sth. similar for the TLS dtors,
                 // and of course eval_main.
@@ -689,7 +689,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 self.write_primval(arg_dest, data, u8_ptr_ty)?;
 
                 // We ourselves return 0
-                self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
+                self.write_null(dest, dest_ty)?;
 
                 // Don't fall through
                 return Ok(());
@@ -727,7 +727,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                     let new_ptr = ptr.offset(num - idx as u64 - 1, self.memory.layout)?;
                     self.write_primval(dest, new_ptr, dest_ty)?;
                 } else {
-                    self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
+                    self.write_null(dest, dest_ty)?;
                 }
             }
 
@@ -739,7 +739,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                     let new_ptr = ptr.offset(idx as u64, self.memory.layout)?;
                     self.write_primval(dest, new_ptr, dest_ty)?;
                 } else {
-                    self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
+                    self.write_null(dest, dest_ty)?;
                 }
             }
 
@@ -770,7 +770,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                     if let Some(var) = old {
                         self.memory.deallocate(var)?;
                     }
-                    self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
+                    self.write_null(dest, dest_ty)?;
                 } else {
                     self.write_primval(dest, PrimVal::from_i128(-1), dest_ty)?;
                 }
@@ -797,7 +797,7 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                     if let Some(var) = self.env_vars.insert(name.to_owned(), value_copy) {
                         self.memory.deallocate(var)?;
                     }
-                    self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
+                    self.write_null(dest, dest_ty)?;
                 } else {
                     self.write_primval(dest, PrimVal::from_i128(-1), dest_ty)?;
                 }
@@ -878,14 +878,14 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 self.memory.write_uint(key_ptr.to_ptr()?, key, key_size.bytes())?;
 
                 // Return success (0)
-                self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
+                self.write_null(dest, dest_ty)?;
             }
             "pthread_key_delete" => {
                 // The conversion into TlsKey here is a little fishy, but should work as long as usize >= libc::pthread_key_t
                 let key = self.value_to_primval(args[0], usize)?.to_u64()? as TlsKey;
                 self.memory.delete_tls_key(key)?;
                 // Return success (0)
-                self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
+                self.write_null(dest, dest_ty)?;
             }
             "pthread_getspecific" => {
                 // The conversion into TlsKey here is a little fishy, but should work as long as usize >= libc::pthread_key_t
@@ -900,13 +900,13 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
                 self.memory.store_tls(key, new_ptr)?;
                 
                 // Return success (0)
-                self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
+                self.write_null(dest, dest_ty)?;
             }
 
             // Stub out all the other pthread calls to just return 0
             link_name if link_name.starts_with("pthread_") => {
                 warn!("ignoring C ABI call: {}", link_name);
-                self.write_primval(dest, PrimVal::Bytes(0), dest_ty)?;
+                self.write_null(dest, dest_ty)?;
             },
 
             _ => {
