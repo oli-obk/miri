@@ -313,6 +313,12 @@ impl<'a, 'tcx> EvalContext<'a, 'tcx> {
             set
         }
 
+        // every argument also produces a local variable
+        // Rust doesn't allow destructuring in patterns yet, so this check actually works like that
+        if self.const_env() && mir.vars_iter().count() > mir.args_iter().count() {
+            return Err(EvalError::NeedsRfc("local variables".to_string()));
+        }
+
         // Subtract 1 because `local_decls` includes the ReturnMemoryPointer, but we don't store a local
         // `Value` for that.
         let annotated_locals = collect_storage_annotations(mir);
