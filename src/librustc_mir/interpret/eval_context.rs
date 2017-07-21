@@ -15,12 +15,14 @@ use syntax::codemap::{self, DUMMY_SP, Span};
 use syntax::ast::{self, Mutability};
 use syntax::abi::Abi;
 
-use error::{EvalError, EvalResult};
-use lvalue::{Global, GlobalId, Lvalue, LvalueExtra};
-use memory::{Memory, MemoryPointer, TlsKey, HasMemory};
-use memory::Kind as MemoryKind;
-use operator;
-use value::{PrimVal, PrimValKind, Value, Pointer};
+use super::{
+    EvalError, EvalResult,
+    Global, GlobalId, Lvalue, LvalueExtra,
+    Memory, MemoryPointer, TlsKey, HasMemory,
+    Kind as MemoryKind,
+    operator,
+    PrimVal, PrimValKind, Value, Pointer,
+};
 
 pub struct EvalContext<'a, 'tcx: 'a> {
     /// The results of the type checker, from rustc.

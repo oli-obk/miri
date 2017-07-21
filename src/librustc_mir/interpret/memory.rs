@@ -6,9 +6,11 @@ use rustc::ty;
 use rustc::ty::layout::{self, TargetDataLayout, HasDataLayout};
 use syntax::ast::Mutability;
 
-use error::{EvalError, EvalResult};
-use value::{PrimVal, Pointer};
-use eval_context::EvalContext;
+use super::{
+    EvalError, EvalResult,
+    PrimVal, Pointer,
+    EvalContext,
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Allocations and pointers
