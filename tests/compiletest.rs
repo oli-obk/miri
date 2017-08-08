@@ -21,7 +21,8 @@ fn compile_fail(sysroot: &Path, path: &str, target: &str, host: &str, fullmir: b
     config.mode = "compile-fail".parse().expect("Invalid mode");
     config.rustc_path = MIRI_PATH.into();
     let mut flags = Vec::new();
-    if fullmir {
+    // if we are building as part of the rustc test suite, we already have fullmir for everything
+    if fullmir && env!("RUSTC_TEST_SUITE") != "1" {
         if host != target {
             // skip fullmir on nonhost
             return;
@@ -63,7 +64,8 @@ fn miri_pass(path: &str, target: &str, host: &str, fullmir: bool, opt: bool) {
     config.host = host.to_owned();
     config.rustc_path = MIRI_PATH.into();
     let mut flags = Vec::new();
-    if fullmir {
+    // if we are building as part of the rustc test suite, we already have fullmir for everything
+    if fullmir && env!("RUSTC_TEST_SUITE") != "1" {
         if host != target {
             // skip fullmir on nonhost
             return;
