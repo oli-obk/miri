@@ -154,6 +154,7 @@ dependencies = [
  "log 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "log_settings 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc_miri 0.1.0",
+ "rustc_tests 0.1.0",
 ]
 
 [[package]]
@@ -192,6 +193,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "rustc-serialize"
 version = "0.3.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "rustc_tests"
+version = "0.1.0"
+dependencies = [
+ "miri 0.1.0",
+]
 
 [[package]]
 name = "serde"

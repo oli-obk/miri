@@ -5,3 +5,5 @@ authors = ["Oliver Schneider <git-spam-no-reply9815368754983@oli-obk.de>"]
 
 [dependencies]
 miri = { path = ".." }
+
+[workspace]

@@ -1,6 +1,9 @@
 #![feature(slice_concat_ext)]
 
 extern crate compiletest_rs as compiletest;
+extern crate rustc_tests;
+
+use rustc_tests::get_sysroot;
 
 use std::slice::SliceConcatExt;
 use std::path::{PathBuf, Path};
@@ -22,7 +25,7 @@ fn compile_fail(sysroot: &Path, path: &str, target: &str, host: &str, fullmir: b
     config.rustc_path = MIRI_PATH.into();
     let mut flags = Vec::new();
     // if we are building as part of the rustc test suite, we already have fullmir for everything
-    if fullmir && env!("RUSTC_TEST_SUITE") != "1" {
+    if fullmir && option_env!("RUSTC_TEST_SUITE").map_or(true, |env| env != "1") {
         if host != target {
             // skip fullmir on nonhost
             return;
@@ -57,37 +60,25 @@ fn miri_pass(path: &str, target: &str, host: &str, fullmir: bool, opt: bool) {
         ""
     };
     eprintln!("## Running run-pass tests in {} against miri for target {}{}", path, target, opt_str);
-    let mut config = compiletest::default_config();
-    config.mode = "mir-opt".parse().expect("Invalid mode");
-    config.src_base = PathBuf::from(path);
-    config.target = target.to_owned();
-    config.host = host.to_owned();
-    config.rustc_path = MIRI_PATH.into();
-    let mut flags = Vec::new();
     // if we are building as part of the rustc test suite, we already have fullmir for everything
-    if fullmir && env!("RUSTC_TEST_SUITE") != "1" {
+    let sysroot = if fullmir && option_env!("RUSTC_TEST_SUITE").map_or(true, |env| env != "1") {
         if host != target {
             // skip fullmir on nonhost
             return;
         }
-        let sysroot = Path::new(&std::env::var("HOME").unwrap()).join(".xargo").join("HOST");
-        flags.push(format!("--sysroot {}", sysroot.to_str().unwrap()));
-    }
-    if opt {
-        flags.push("-Zmir-opt-level=3".to_owned());
+        Path::new(&std::env::var("HOME").unwrap()).join(".xargo").join("HOST")
     } else {
-        flags.push("-Zmir-opt-level=0".to_owned());
-        // For now, only validate without optimizations.  Inlining breaks validation.
-        flags.push("-Zmir-emit-validate=1".to_owned());
-    }
-    config.target_rustcflags = Some(flags.join(" "));
-    // don't actually execute the final binary, it might be for other targets and we only care
-    // about running miri, not the binary.
-    config.runtool = Some("echo \"\" || ".to_owned());
+        get_sysroot()
+    };
+    let opt_level = if opt {
+        3
+    } else {
+        0
+    };
     if target == host {
         std::env::set_var("MIRI_HOST_TARGET", "yes");
     }
-    compiletest::run_tests(&config);
+    rustc_tests::run(path, &sysroot, opt_level).unwrap();
     std::env::set_var("MIRI_HOST_TARGET", "");
 }
 
@@ -105,19 +96,6 @@ fn for_all_targets<F: FnMut(String)>(sysroot: &Path, mut f: F) {
         let target = entry.file_name().into_string().unwrap();
         f(target);
     }
-}
-
-fn get_sysroot() -> PathBuf {
-    let sysroot = std::env::var("MIRI_SYSROOT").unwrap_or_else(|_| {
-        let sysroot = std::process::Command::new("rustc")
-            .arg("--print")
-            .arg("sysroot")
-            .output()
-            .expect("rustc not found")
-            .stdout;
-        String::from_utf8(sysroot).expect("sysroot is not utf8")
-    });
-    PathBuf::from(sysroot.trim())
 }
 
 fn get_host() -> String {
