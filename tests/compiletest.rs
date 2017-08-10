@@ -20,27 +20,21 @@ const MIRI_PATH: &'static str = concat!("target/", env!("PROFILE"), "/miri");
 
 fn compile_fail(sysroot: &Path, path: &str, target: &str, host: &str, fullmir: bool) {
     eprintln!("## Running compile-fail tests in {} against miri for target {}", path, target);
-    let mut config = compiletest::default_config();
-    config.mode = "compile-fail".parse().expect("Invalid mode");
-    config.rustc_path = MIRI_PATH.into();
-    let mut flags = Vec::new();
     // if we are building as part of the rustc test suite, we already have fullmir for everything
-    if fullmir && option_env!("RUSTC_TEST_SUITE").map_or(true, |env| env != "1") {
+    let sysroot = if fullmir && option_env!("RUSTC_TEST_SUITE").map_or(true, |env| env != "1") {
         if host != target {
             // skip fullmir on nonhost
             return;
         }
-        let sysroot = Path::new(&std::env::var("HOME").unwrap()).join(".xargo").join("HOST");
-        config.target_rustcflags = Some(format!("--sysroot {}", sysroot.to_str().unwrap()));
-        config.src_base = PathBuf::from(path.to_string());
+        Path::new(&std::env::var("HOME").unwrap()).join(".xargo").join("HOST")
     } else {
-        config.target_rustcflags = Some(format!("--sysroot {}", sysroot.to_str().unwrap()));
-        config.src_base = PathBuf::from(path.to_string());
+        get_sysroot()
+    };
+    if target == host {
+        std::env::set_var("MIRI_HOST_TARGET", "yes");
     }
-    flags.push("-Zmir-emit-validate=1".to_owned());
-    config.target_rustcflags = Some(flags.join(" "));
-    config.target = target.to_owned();
-    compiletest::run_tests(&config);
+    rustc_tests::run(path, &sysroot, 0).unwrap_err();
+    std::env::set_var("MIRI_HOST_TARGET", "");
 }
 
 fn run_pass(path: &str) {
