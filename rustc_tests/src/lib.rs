@@ -180,18 +180,38 @@ fn run_inner(path: &Path, sysroot: &Path, opt_level: usize) -> Result<u64, Repor
         // file to process
         args.push(path.display().to_string());
 
+        // parse test specific compile flags
+        use std::io::{BufReader, BufRead};
+        let mut aux = Vec::new();
+        for line in BufReader::new(std::fs::File::open(path).unwrap()).lines() {
+            let mut line = &*line.unwrap();
+            if line.starts_with("//") {
+                line = line[2..].trim();
+            } else {
+                continue;
+            }
+            if line.starts_with("compile-flags:") {
+                line = line["compile-flags:".len()..].trim();
+                args.extend(line.split_whitespace().map(ToString::to_string));
+            } else if line.starts_with("aux-build:") {
+                line = line["aux-build:".len()..].trim();
+                aux.extend(line.split(',').map(|s| s.trim().to_string()));
+            }
+        }
+
         let sysroot_flag = String::from("--sysroot");
         args.push(sysroot_flag);
         args.push(sysroot.display().to_string());
 
-        args.push(format!("-Zmir-opt-level={}", opt_level));
+        if !args.iter().any(|arg| arg.starts_with("-Zmir-opt-level=")) {
+            args.push(format!("-Zmir-opt-level={}", opt_level));
+        }
         // for auxilary builds in unit tests
         args.push("-Zalways-encode-mir".to_owned());
-        if opt_level == 0 {
+        if opt_level == 0 && !args.iter().any(|arg| arg.starts_with("-Zmir-emit-validate=")) {
             // For now, only validate without optimizations.  Inlining breaks validation.
             args.push("-Zmir-emit-validate=1".to_owned());
         }
-        println!("{:#?}", args);
 
         // A threadsafe buffer for writing.
         #[derive(Default, Clone)]

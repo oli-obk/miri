@@ -1,11 +1,8 @@
-#![feature(slice_concat_ext)]
-
 extern crate compiletest_rs as compiletest;
 extern crate rustc_tests;
 
 use rustc_tests::get_sysroot;
 
-use std::slice::SliceConcatExt;
 use std::path::{PathBuf, Path};
 use std::io::Write;
 
@@ -15,8 +12,6 @@ macro_rules! eprintln {
         writeln!(stderr.lock(), $($arg)*).unwrap();
     }
 }
-
-const MIRI_PATH: &'static str = concat!("target/", env!("PROFILE"), "/miri");
 
 fn compile_fail(sysroot: &Path, path: &str, target: &str, host: &str, fullmir: bool) {
     eprintln!("## Running compile-fail tests in {} against miri for target {}", path, target);
@@ -28,12 +23,13 @@ fn compile_fail(sysroot: &Path, path: &str, target: &str, host: &str, fullmir: b
         }
         Path::new(&std::env::var("HOME").unwrap()).join(".xargo").join("HOST")
     } else {
-        get_sysroot()
+        sysroot.to_owned()
     };
     if target == host {
         std::env::set_var("MIRI_HOST_TARGET", "yes");
     }
-    rustc_tests::run(path, &sysroot, 0).unwrap_err();
+    let report = rustc_tests::run(path, &sysroot, 0).unwrap_err();
+    assert_eq!(report.success, 0);
     std::env::set_var("MIRI_HOST_TARGET", "");
 }
 
