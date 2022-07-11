@@ -17,18 +17,23 @@ use crate::shims::os_str::bytes_to_os_str;
 use crate::*;
 use shims::os_str::os_str_to_bytes;
 use shims::time::system_time_to_duration;
+use shims::unix::linux::fd::epoll::Epoll;
 
 #[derive(Debug)]
-struct FileHandle {
+pub struct FileHandle {
     file: File,
     writable: bool,
 }
 
-trait FileDescriptor: std::fmt::Debug {
+pub trait FileDescriptor: std::fmt::Debug {
     fn name(&self) -> &'static str;
 
     fn as_file_handle<'tcx>(&self) -> InterpResult<'tcx, &FileHandle> {
         throw_unsup_format!("{} cannot be used as FileHandle", self.name());
+    }
+
+    fn as_epoll_handle<'tcx>(&mut self) -> InterpResult<'tcx, &mut Epoll> {
+        throw_unsup_format!("not an epoll file descriptor");
     }
 
     fn read<'tcx>(
@@ -42,9 +47,9 @@ trait FileDescriptor: std::fmt::Debug {
     fn write<'tcx>(
         &self,
         _communicate_allowed: bool,
-        _bytes: &[u8],
+        bytes: &[u8],
     ) -> InterpResult<'tcx, io::Result<usize>> {
-        throw_unsup_format!("cannot write to {}", self.name());
+        throw_unsup_format!("cannot write to {}, {:?}", self.name(), bytes);
     }
 
     fn seek<'tcx>(
@@ -274,7 +279,7 @@ impl FileDescriptor for NullOutput {
 
 #[derive(Debug)]
 pub struct FileHandler {
-    handles: BTreeMap<i32, Box<dyn FileDescriptor>>,
+    pub handles: BTreeMap<i32, Box<dyn FileDescriptor>>,
 }
 
 impl VisitTags for FileHandler {
@@ -297,7 +302,7 @@ impl FileHandler {
         FileHandler { handles }
     }
 
-    fn insert_fd(&mut self, file_handle: Box<dyn FileDescriptor>) -> i32 {
+    pub fn insert_fd(&mut self, file_handle: Box<dyn FileDescriptor>) -> i32 {
         self.insert_fd_with_min_fd(file_handle, 0)
     }
 
@@ -332,7 +337,9 @@ impl FileHandler {
 }
 
 impl<'mir, 'tcx: 'mir> EvalContextExtPrivate<'mir, 'tcx> for crate::MiriInterpCx<'mir, 'tcx> {}
-trait EvalContextExtPrivate<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
+pub(super) trait EvalContextExtPrivate<'mir, 'tcx: 'mir>:
+    crate::MiriInterpCxExt<'mir, 'tcx>
+{
     fn macos_stat_write_buf(
         &mut self,
         metadata: FileMetadata,
@@ -1902,7 +1909,7 @@ fn extract_sec_and_nsec<'tcx>(
 
 /// Stores a file's metadata in order to avoid code duplication in the different metadata related
 /// shims.
-struct FileMetadata {
+pub(super) struct FileMetadata {
     mode: Scalar<Provenance>,
     size: u64,
     created: Option<(u64, u32)>,
