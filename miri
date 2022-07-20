@@ -133,7 +133,7 @@ find_sysroot() {
 }
 
 ## Main
-if [[ -z "$AUTO_OPS" ]]; then
+if [ -z "$AUTO_OPS" ]; then
     export AUTO_OPS=42
     if [[ -f ".auto-everything" || -f ".auto-toolchain" ]] ; then
         ./rustup-toolchain
