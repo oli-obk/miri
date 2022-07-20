@@ -136,7 +136,7 @@ find_sysroot() {
 if [ -z "$AUTO_OPS" ]; then
     export AUTO_OPS=42
     if [[ -f ".auto-everything" || -f ".auto-toolchain" ]] ; then
-        ./rustup-toolchain
+        "$MIRIDIR"/rustup-toolchain
     fi
 
     if [[ -f ".auto-everything" || -f ".auto-fmt" ]] ; then
