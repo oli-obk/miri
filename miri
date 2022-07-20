@@ -133,6 +133,20 @@ find_sysroot() {
 }
 
 ## Main
+if [[ -z "$AUTO_OPS" ]]; then
+    export AUTO_OPS=42
+    if [[ -f ".auto-everything" || -f ".auto-toolchain" ]] ; then
+        ./rustup-toolchain
+    fi
+
+    if [[ -f ".auto-everything" || -f ".auto-fmt" ]] ; then
+        $0 fmt
+    fi
+
+    if [[ -f ".auto-everything" || -f ".auto-clippy" ]] ; then
+        $0 clippy -- -D warnings
+    fi
+fi
 
 # Run command.
 case "$COMMAND" in
