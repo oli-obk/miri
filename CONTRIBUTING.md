@@ -116,6 +116,19 @@ to run the other checks while ignoring the ui output, use `MIRI_SKIP_UI_CHECKS=1
 
 For more info on how to configure ui tests see [the documentation on the ui test crate][ui_test]
 
+If you change the `ui_test` crate and want to sync with the official repository, you can use
+
+```
+git remote add ui_test path_to_your_github_fork
+git remote add ui_test_upstream https://github.com/oli-obk/ui_test.git
+
+# get new changes
+git subtree pull --prefix=ui_test ui_test_upstream main
+
+# push your local changes
+git subtree push --prefix=ui_test ui_test a_new_branch_name
+```
+
 [ui_test]: ui_test/README.md
 
 ### Testing `cargo miri`
