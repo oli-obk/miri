@@ -81,7 +81,7 @@ pub fn phase_cargo_miri(mut args: impl Iterator<Item = String>) {
     };
     let subcommand = match &*subcommand {
         "setup" => MiriCommand::Setup,
-        "test" | "t" | "run" | "r" | "nextest" => MiriCommand::Forward(subcommand),
+        "build" | "test" | "t" | "run" | "r" | "nextest" => MiriCommand::Forward(subcommand),
         _ =>
             show_error!(
                 "`cargo miri` supports the following subcommands: `run`, `test`, `nextest`, and `setup`."
