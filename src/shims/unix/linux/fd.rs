@@ -22,14 +22,12 @@ pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
         let flags = this.read_scalar(flags)?.to_i32()?;
 
         let epoll_cloexec = this.eval_libc_i32("EPOLL_CLOEXEC")?;
-        // FIXME handle cloexec
         if flags == epoll_cloexec {
-            // FIXME set close on exec, FD_CLOEXEC
+            // Miri does not support exec, so this flag has no effect.
         } else if flags != 0 {
             throw_unsup_format!("epoll_create1 flags {flags} are not implemented");
         }
 
-        #[allow(clippy::box_default)]
         let fd = this.machine.file_handler.insert_fd(Box::new(Epoll::default()));
         Ok(Scalar::from_i32(fd))
     }

@@ -47,9 +47,9 @@ pub trait FileDescriptor: std::fmt::Debug {
     fn write<'tcx>(
         &self,
         _communicate_allowed: bool,
-        bytes: &[u8],
+        _bytes: &[u8],
     ) -> InterpResult<'tcx, io::Result<usize>> {
-        throw_unsup_format!("cannot write to {}, {:?}", self.name(), bytes);
+        throw_unsup_format!("cannot write to {}", self.name());
     }
 
     fn seek<'tcx>(
