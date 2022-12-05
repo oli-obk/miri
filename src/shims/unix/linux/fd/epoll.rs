@@ -5,8 +5,8 @@ use crate::shims::unix::fs::FileDescriptor;
 use rustc_data_structures::fx::FxHashMap;
 use std::io;
 
+/// An `Epoll` file descriptor connects file handles and epoll events
 #[derive(Clone, Debug, Default)]
-/// An `Epoll` connects file handles and epoll events
 pub struct Epoll {
     /// The file descriptors we are watching, and what we are watching for.
     pub file_descriptors: FxHashMap<i32, EpollEvent>,

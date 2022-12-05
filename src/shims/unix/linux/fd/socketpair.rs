@@ -4,10 +4,10 @@ use crate::shims::unix::fs::FileDescriptor;
 
 use std::io;
 
-#[derive(Debug)]
 /// Pair of connected sockets.
 ///
 /// We currently don't allow sending any data through this pair, so this can be just a dummy.
+#[derive(Debug)]
 pub struct SocketPair;
 
 impl FileDescriptor for SocketPair {

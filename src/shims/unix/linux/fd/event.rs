@@ -4,7 +4,6 @@ use rustc_const_eval::interpret::InterpResult;
 
 use std::io;
 
-#[derive(Debug)]
 /// A kind of file descriptor created by `eventfd`.
 /// The `Event` type isn't currently written to by `eventfd`.
 /// The interface is meant to keep track of objects associated
@@ -12,6 +11,7 @@ use std::io;
 /// page below:
 ///
 /// <https://man.netbsd.org/eventfd.2>
+#[derive(Debug)]
 pub struct Event {
     pub val: u32,
 }
