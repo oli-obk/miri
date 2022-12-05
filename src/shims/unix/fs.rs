@@ -337,9 +337,7 @@ impl FileHandler {
 }
 
 impl<'mir, 'tcx: 'mir> EvalContextExtPrivate<'mir, 'tcx> for crate::MiriInterpCx<'mir, 'tcx> {}
-pub(super) trait EvalContextExtPrivate<'mir, 'tcx: 'mir>:
-    crate::MiriInterpCxExt<'mir, 'tcx>
-{
+trait EvalContextExtPrivate<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
     fn macos_stat_write_buf(
         &mut self,
         metadata: FileMetadata,
@@ -381,17 +379,6 @@ pub(super) trait EvalContextExtPrivate<'mir, 'tcx: 'mir>:
         )?;
 
         Ok(0)
-    }
-
-    /// Function used when a handle is not found inside `FileHandler`. It returns `Ok(-1)`and sets
-    /// the last OS error to `libc::EBADF` (invalid file descriptor). This function uses
-    /// `T: From<i32>` instead of `i32` directly because some fs functions return different integer
-    /// types (like `read`, that returns an `i64`).
-    fn handle_not_found<T: From<i32>>(&mut self) -> InterpResult<'tcx, T> {
-        let this = self.eval_context_mut();
-        let ebadf = this.eval_libc("EBADF")?;
-        this.set_last_error(ebadf)?;
-        Ok((-1).into())
     }
 
     fn file_type_to_d_type(
@@ -722,6 +709,17 @@ pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
                 this.handle_not_found()?
             },
         ))
+    }
+
+    /// Function used when a handle is not found inside `FileHandler`. It returns `Ok(-1)`and sets
+    /// the last OS error to `libc::EBADF` (invalid file descriptor). This function uses
+    /// `T: From<i32>` instead of `i32` directly because some fs functions return different integer
+    /// types (like `read`, that returns an `i64`).
+    fn handle_not_found<T: From<i32>>(&mut self) -> InterpResult<'tcx, T> {
+        let this = self.eval_context_mut();
+        let ebadf = this.eval_libc("EBADF")?;
+        this.set_last_error(ebadf)?;
+        Ok((-1).into())
     }
 
     fn read(
@@ -1909,7 +1907,7 @@ fn extract_sec_and_nsec<'tcx>(
 
 /// Stores a file's metadata in order to avoid code duplication in the different metadata related
 /// shims.
-pub(super) struct FileMetadata {
+struct FileMetadata {
     mode: Scalar<Provenance>,
     size: u64,
     created: Option<(u64, u32)>,

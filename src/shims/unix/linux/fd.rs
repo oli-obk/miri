@@ -5,7 +5,7 @@ use epoll::{Epoll, EpollEvent};
 use event::Event;
 use socketpair::SocketPair;
 
-use shims::unix::fs::EvalContextExtPrivate;
+use shims::unix::fs::EvalContextExt as _;
 
 pub mod epoll;
 pub mod event;
