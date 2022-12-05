@@ -13,6 +13,11 @@ pub mod socketpair;
 
 impl<'mir, 'tcx: 'mir> EvalContextExt<'mir, 'tcx> for crate::MiriInterpCx<'mir, 'tcx> {}
 pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
+    /// This function returns a file descriptor referring to the new `Epoll` instance. This file
+    /// descriptor is used for all subsequent calls to the epoll interface. If the `flags` argument
+    /// is 0, then this function is the same as `epoll_create()`.
+    ///
+    /// https://linux.die.net/man/2/epoll_create1
     fn epoll_create1(
         &mut self,
         flags: &OpTy<'tcx, Provenance>,
@@ -32,6 +37,19 @@ pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
         Ok(Scalar::from_i32(fd))
     }
 
+    /// This function performs control operations on the `Epoll` instance referred to by the file
+    /// descriptor `epfd`. It requests that the operation `op` be performed for the target file
+    /// descriptor, `fd`.
+    ///
+    /// Valid values for the op argument are:
+    /// `EPOLL_CTL_ADD` - Register the target file descriptor `fd` on the `Epoll` instance referred
+    /// to by the file descriptor `epfd` and associate the event `event` with the internal file
+    /// linked to `fd`.
+    /// `EPOLL_CTL_MOD` - Change the event `event` associated with the target file descriptor `fd`.
+    /// `EPOLL_CTL_DEL` - Deregister the target file descriptor `fd` from the `Epoll` instance
+    /// referred to by `epfd`. The `event` is ignored and can be null.
+    ///
+    /// https://linux.die.net/man/2/epoll_ctl
     fn epoll_ctl(
         &mut self,
         epfd: &OpTy<'tcx, Provenance>,
@@ -83,6 +101,22 @@ pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
         }
     }
 
+    /// This function creates an `Event` that is used as an event wait/notify mechanism by
+    /// user-space applications, and by the kernel to notify user-space applications of events.
+    /// The `Event` contains an `u64` counter maintained by the kernel. The counter is initialized
+    /// with the value specified in the `initval` argument.
+    ///
+    /// A new file descriptor referring to the `Event` is returned. The `read`, `write`, `poll`,
+    /// `select`, and `close` operations can be performed on the file descriptor. For more
+    /// information on these operations, see the man page linked below.
+    ///
+    /// The `flags` are not currently implemented for eventfd.
+    /// The `flags` may be bitwise ORed to change the behavior of `eventfd`:
+    /// `EFD_CLOEXEC` - Set the close-on-exec (`FD_CLOEXEC`) flag on the new file descriptor.
+    /// `EFD_NONBLOCK` - Set the `O_NONBLOCK` file status flag on the new open file description.
+    /// `EFD_SEMAPHORE` - miri does not support semaphore-like semantics.
+    ///
+    /// https://linux.die.net/man/2/eventfd
     fn eventfd(
         &mut self,
         val: &OpTy<'tcx, Provenance>,
@@ -112,6 +146,23 @@ pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
         Ok(Scalar::from_i32(fd))
     }
 
+    /// Currently this function creates new `SocketPair`s without specifying the domain, type, or
+    /// protocol of the new socket and these are stored in the socket values `sv` argument.
+    ///
+    /// This function creates an unnamed pair of connected sockets in the specified domain, of the
+    /// specified type, and using the optionally specified protocol.
+    ///
+    /// The `domain` argument specified a communication domain; this selects the protocol family
+    /// used for communication. The socket `type` specifies the communication semantics.
+    /// The `protocol` specifies a particular protocol to use with the socket. Normally there's
+    /// only a single protocol supported for a particular socket type within a given protocol
+    /// family, in which case `protocol` can be specified as 0. It is possible that many protocols
+    /// exist and in that case, a particular protocol must be specified.
+    ///
+    /// For more information on the arguments see the socket manpage:
+    /// https://linux.die.net/man/2/socket
+    ///
+    /// https://linux.die.net/man/2/socketpair
     fn socketpair(
         &mut self,
         domain: &OpTy<'tcx, Provenance>,
