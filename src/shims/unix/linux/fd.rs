@@ -17,7 +17,7 @@ pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
     /// descriptor is used for all subsequent calls to the epoll interface. If the `flags` argument
     /// is 0, then this function is the same as `epoll_create()`.
     ///
-    /// https://linux.die.net/man/2/epoll_create1
+    /// <https://linux.die.net/man/2/epoll_create1>
     fn epoll_create1(
         &mut self,
         flags: &OpTy<'tcx, Provenance>,
@@ -49,7 +49,7 @@ pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
     /// `EPOLL_CTL_DEL` - Deregister the target file descriptor `fd` from the `Epoll` instance
     /// referred to by `epfd`. The `event` is ignored and can be null.
     ///
-    /// https://linux.die.net/man/2/epoll_ctl
+    /// <https://linux.die.net/man/2/epoll_ctl>
     fn epoll_ctl(
         &mut self,
         epfd: &OpTy<'tcx, Provenance>,
@@ -116,7 +116,7 @@ pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
     /// `EFD_NONBLOCK` - Set the `O_NONBLOCK` file status flag on the new open file description.
     /// `EFD_SEMAPHORE` - miri does not support semaphore-like semantics.
     ///
-    /// https://linux.die.net/man/2/eventfd
+    /// <https://linux.die.net/man/2/eventfd>
     fn eventfd(
         &mut self,
         val: &OpTy<'tcx, Provenance>,
@@ -160,9 +160,9 @@ pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
     /// exist and in that case, a particular protocol must be specified.
     ///
     /// For more information on the arguments see the socket manpage:
-    /// https://linux.die.net/man/2/socket
+    /// <https://linux.die.net/man/2/socket>
     ///
-    /// https://linux.die.net/man/2/socketpair
+    /// <https://linux.die.net/man/2/socketpair>
     fn socketpair(
         &mut self,
         domain: &OpTy<'tcx, Provenance>,
