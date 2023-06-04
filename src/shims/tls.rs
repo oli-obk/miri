@@ -105,12 +105,21 @@ impl<'tcx> TlsData<'tcx> {
         thread_id: ThreadId,
         new_data: Scalar<Provenance>,
         cx: &impl HasDataLayout,
+        static_roots: &mut Vec<AllocId>,
     ) -> InterpResult<'tcx> {
         match self.keys.get_mut(&key) {
             Some(TlsEntry { data, .. }) => {
                 if new_data.to_target_usize(cx)? != 0 {
                     trace!("TLS key {} for thread {:?} stored: {:?}", key, thread_id, new_data);
                     data.insert(thread_id, new_data);
+                    if thread_id.to_u32() == 0 {
+                        if let Some(alloc) = (new_data.to_pointer(cx).ok())
+                            .and_then(|ptr| ptr.provenance.and_then(|prov| prov.get_alloc_id()))
+                        {
+                            trace!("TLS key {} for main thread stored as static root", key);
+                            static_roots.push(alloc);
+                        }
+                    }
                 } else {
                     trace!("TLS key {} for thread {:?} removed", key, thread_id);
                     data.remove(&thread_id);

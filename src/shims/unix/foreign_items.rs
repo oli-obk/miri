@@ -305,7 +305,7 @@ pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
                 let key = this.read_scalar(key)?.to_bits(key.layout.size)?;
                 let active_thread = this.get_active_thread();
                 let new_data = this.read_scalar(new_ptr)?;
-                this.machine.tls.store_tls(key, active_thread, new_data, &*this.tcx)?;
+                this.machine.tls.store_tls(key, active_thread, new_data, &*this.tcx, &mut this.machine.static_roots)?;
 
                 // Return success (`0`).
                 this.write_null(dest)?;
