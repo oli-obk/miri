@@ -116,7 +116,11 @@ impl<'tcx> TlsData<'tcx> {
                         if let Some(alloc) = (new_data.to_pointer(cx).ok())
                             .and_then(|ptr| ptr.provenance.and_then(|prov| prov.get_alloc_id()))
                         {
-                            trace!("TLS key {} for main thread stored as static root", key);
+                            trace!(
+                                "TLS key {} for main thread stored as static root: {:?}",
+                                key,
+                                alloc,
+                            );
                             static_roots.push(alloc);
                         }
                     }

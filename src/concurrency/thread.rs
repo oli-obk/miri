@@ -1073,6 +1073,10 @@ pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriInterpCxExt<'mir, 'tcx> {
         for ptr in
             this.machine.threads.thread_terminated(this.machine.data_race.as_mut(), current_span)
         {
+            if let Some(alloc) = ptr.provenance.get_alloc_id() {
+                trace!("Main thread thread-local static stored as static root: {:?}", alloc);
+                this.machine.static_roots.push(alloc);
+            }
             this.deallocate_ptr(ptr.into(), None, MiriMemoryKind::Tls.into())?;
         }
         Ok(())
