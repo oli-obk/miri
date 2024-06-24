@@ -106,6 +106,7 @@ impl FileDescription for FileHandle {
 
     fn close<'tcx>(
         self: Box<Self>,
+        _ecx: &mut MiriInterpCx<'tcx>,
         communicate_allowed: bool,
     ) -> InterpResult<'tcx, io::Result<()>> {
         assert!(communicate_allowed, "isolation should have prevented even opening a file");

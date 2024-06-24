@@ -1,32 +1,68 @@
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::io;
+use std::rc::Rc;
 
-use rustc_data_structures::fx::FxHashMap;
-
+use crate::shims::unix::fd::WeakFileDescriptor;
 use crate::shims::unix::*;
 use crate::*;
+
+use self::shims::unix::fd::FileDescriptor;
 
 /// An `Epoll` file descriptor connects file handles and epoll events
 #[derive(Clone, Debug, Default)]
 struct Epoll {
     /// The file descriptors we are watching, and what we are watching for.
-    file_descriptors: FxHashMap<i32, EpollEvent>,
+    interest_list: BTreeMap<(WeakFileDescriptor, i32), Rc<EpollEvent>>,
+    // ready_list is an Rc because EpollEvents need to hold a reference to update
+    // it.
+    ready_list: Rc<RefCell<BTreeMap<(WeakFileDescriptor, i32), EpollReturn>>>,
+}
+
+/// EpollReturn contains information that will be returned by epoll_wait,
+/// and stored in ready list.
+#[derive(Debug)]
+pub struct EpollReturn {
+    // Events that happened to the file description.
+    events: u32,
+    // Original data retrieved from `epoll_event`
+    data: u64,
+}
+
+impl EpollReturn {
+    pub fn new(events: u32, data: u64) -> EpollReturn {
+        EpollReturn { events, data }
+    }
+    pub fn update_events(&mut self, flag: u32) {
+        self.events |= flag;
+    }
 }
 
 /// Epoll Events associate events with data.
-/// These fields are currently unused by miri.
-/// This matches the `epoll_event` struct defined
+/// `events` and `data` field matches the `epoll_event` struct defined
 /// by the epoll_ctl man page. For more information
 /// see the man page:
 ///
 /// <https://man7.org/linux/man-pages/man2/epoll_ctl.2.html>
 #[derive(Clone, Debug)]
-struct EpollEvent {
-    #[allow(dead_code)]
-    events: u32,
-    /// `Scalar` is used to represent the
-    /// `epoll_data` type union.
-    #[allow(dead_code)]
-    data: Scalar,
+pub struct EpollEvent {
+    // The file descriptor value associated with this epoll_event.
+    pub file_descriptor: i32,
+    // The file descriptor struct associated with this epoll_event.
+    pub weak_file_descriptor: WeakFileDescriptor,
+    pub events: u32,
+    // libc's data field in epoll_event can store integer or pointer,
+    // but only u64 is supported for now.
+    // https://man7.org/linux/man-pages/man3/epoll_event.3type.html
+    pub data: u64,
+    // Ready list of the epoll instance under which this epoll_event is registered.
+    pub ready_list: Rc<RefCell<BTreeMap<(WeakFileDescriptor, i32), EpollReturn>>>,
+}
+
+impl Epoll {
+    fn get_ready_list(&self) -> Rc<RefCell<BTreeMap<(WeakFileDescriptor, i32), EpollReturn>>> {
+        Rc::clone(&self.ready_list)
+    }
 }
 
 impl FileDescription for Epoll {
@@ -36,6 +72,7 @@ impl FileDescription for Epoll {
 
     fn close<'tcx>(
         self: Box<Self>,
+        _ecx: &mut MiriInterpCx<'tcx>,
         _communicate_allowed: bool,
     ) -> InterpResult<'tcx, io::Result<()>> {
         Ok(Ok(()))
@@ -64,7 +101,10 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             );
         }
 
-        let fd = this.machine.fds.insert_fd(Epoll::default());
+        let mut epoll_instance = Epoll::default();
+        epoll_instance.ready_list = Rc::new(RefCell::new(BTreeMap::new()));
+
+        let fd = this.machine.fds.insert_fd(FileDescriptor::new(Epoll::default()));
         Ok(Scalar::from_i32(fd))
     }
 
@@ -90,48 +130,131 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
     ) -> InterpResult<'tcx, Scalar> {
         let this = self.eval_context_mut();
 
-        let epfd = this.read_scalar(epfd)?.to_i32()?;
+        let epfd_value = this.read_scalar(epfd)?.to_i32()?;
         let op = this.read_scalar(op)?.to_i32()?;
         let fd = this.read_scalar(fd)?.to_i32()?;
-        let _event = this.read_scalar(event)?.to_pointer(this)?;
+        let event = this.deref_pointer_as(event, this.libc_ty_layout("epoll_event"))?;
 
         let epoll_ctl_add = this.eval_libc_i32("EPOLL_CTL_ADD");
         let epoll_ctl_mod = this.eval_libc_i32("EPOLL_CTL_MOD");
         let epoll_ctl_del = this.eval_libc_i32("EPOLL_CTL_DEL");
+        let epollin = this.eval_libc_u32("EPOLLIN");
+        let epollout = this.eval_libc_u32("EPOLLOUT");
+        let epollrdhup = this.eval_libc_u32("EPOLLRDHUP");
+        let epollet = this.eval_libc_u32("EPOLLET");
+
+        // Fail on unsupported operations.
+        if op & epoll_ctl_add != epoll_ctl_add
+            && op & epoll_ctl_mod != epoll_ctl_mod
+            && op & epoll_ctl_del != epoll_ctl_del
+        {
+            throw_unsup_format!("epoll_ctl: encountered unknown unsupported operation {:#x}", op);
+        }
+
+        // Check if epfd is a valid epoll file descriptor.
+        let Some(epfd) = this.machine.fds.dup(epfd_value) else {
+            return Ok(Scalar::from_i32(this.fd_not_found()?));
+        };
+        let mut binding = epfd.borrow_mut();
+        let epoll_file_description = &mut binding
+            .downcast_mut::<Epoll>()
+            .ok_or_else(|| err_unsup_format!("non-epoll FD passed to `epoll_ctl`"))?;
+
+        let interest_list = &mut epoll_file_description.interest_list;
+        let ready_list = &epoll_file_description.ready_list;
+
+        let Some(file_descriptor) = this.machine.fds.dup(fd) else {
+            return Ok(Scalar::from_i32(this.fd_not_found()?));
+        };
+        let weak_file_descriptor = file_descriptor.downgrade();
 
         if op == epoll_ctl_add || op == epoll_ctl_mod {
-            let event = this.deref_pointer_as(event, this.libc_ty_layout("epoll_event"))?;
+            // Read event bitmask and data from epoll_event struct.
+            let events = this.read_scalar(&this.project_field(&event, 0)?)?.to_u32()?;
+            let data = this.read_scalar(&this.project_field(&event, 1)?)?.to_u64()?;
 
-            let events = this.project_field(&event, 0)?;
-            let events = this.read_scalar(&events)?.to_u32()?;
-            let data = this.project_field(&event, 1)?;
-            let data = this.read_scalar(&data)?;
-            let event = EpollEvent { events, data };
+            // Unset the flag we support to discover if any unsupported flags are used.
+            let mut flags = events;
+            if events & epollet != epollet {
+                // We only support edge-triggered notification for now.
+                throw_unsup_format!("epoll_ctl: epollet flag must be included.");
+            } else {
+                flags &= !epollet;
+            }
+            if flags & epollin == epollin {
+                flags &= !epollin;
+            }
+            if flags & epollout == epollout {
+                flags &= !epollout;
+            }
+            if flags & epollrdhup == epollrdhup {
+                flags &= !epollrdhup;
+            }
+            if flags != 0 {
+                throw_unsup_format!(
+                    "epoll_ctl: encountered unknown unsupported flags {:#x}",
+                    flags
+                );
+            }
 
-            let Some(mut epfd) = this.machine.fds.get_mut(epfd) else {
-                return Ok(Scalar::from_i32(this.fd_not_found()?));
-            };
-            let epfd = epfd
-                .downcast_mut::<Epoll>()
-                .ok_or_else(|| err_unsup_format!("non-epoll FD passed to `epoll_ctl`"))?;
+            let epoll_key = (weak_file_descriptor, fd);
 
-            epfd.file_descriptors.insert(fd, event);
-            Ok(Scalar::from_i32(0))
+            // Check the existence of fd in the interest list.
+            if op == epoll_ctl_add {
+                if interest_list.contains_key(&epoll_key) {
+                    let eexist = this.eval_libc("EEXIST");
+                    this.set_last_error(eexist)?;
+                    return Ok(Scalar::from_i32(-1));
+                }
+            } else {
+                if !interest_list.contains_key(&epoll_key) {
+                    let enoent = this.eval_libc("ENOENT");
+                    this.set_last_error(enoent)?;
+                    return Ok(Scalar::from_i32(-1));
+                }
+            }
+
+            // Create an epoll_event.
+            let weak_file_descriptor = file_descriptor.downgrade();
+            let binding = weak_file_descriptor.upgrade().unwrap();
+            let mut target_file_description = binding.borrow_mut();
+            let event = Rc::new(EpollEvent {
+                file_descriptor: fd,
+                weak_file_descriptor,
+                events,
+                data,
+                ready_list: Rc::clone(ready_list),
+            });
+            // If it is epoll_ctl_add, a new epoll_event will be inserted.
+            // If it is epoll_ctl_mod, the original epoll_event stored in the file description
+            // will be modified.
+            target_file_description
+                .get_epoll_events()?
+                .insert((fd, epfd_value), Rc::downgrade(&event));
+            // Modify the epoll_event if it already exists (epoll_ctl_mod),
+            // and insert if it doesn't (epoll_ctl_add).
+            interest_list.insert(epoll_key, event);
+
+            // Readiness will be updated immediately when the epoll_event is added or modified.
+            target_file_description.check_and_update_readiness(this)?;
+
+            return Ok(Scalar::from_i32(0));
         } else if op == epoll_ctl_del {
-            let Some(mut epfd) = this.machine.fds.get_mut(epfd) else {
-                return Ok(Scalar::from_i32(this.fd_not_found()?));
-            };
-            let epfd = epfd
-                .downcast_mut::<Epoll>()
-                .ok_or_else(|| err_unsup_format!("non-epoll FD passed to `epoll_ctl`"))?;
+            let epoll_key = (weak_file_descriptor, fd);
+            // Remove epoll_event from interest list.
+            if interest_list.remove(&epoll_key).is_none() {
+                let enoent = this.eval_libc("ENOENT");
+                this.set_last_error(enoent)?;
+                return Ok(Scalar::from_i32(-1));
+            }
 
-            epfd.file_descriptors.remove(&fd);
-            Ok(Scalar::from_i32(0))
-        } else {
-            let einval = this.eval_libc("EINVAL");
-            this.set_last_error(einval)?;
-            Ok(Scalar::from_i32(-1))
+            // Remove related epoll_return from ready list.
+            let mut ready_list = ready_list.borrow_mut();
+            ready_list.remove(&epoll_key);
+
+            return Ok(Scalar::from_i32(0));
         }
+        Ok(Scalar::from_i32(-1))
     }
 
     /// The `epoll_wait()` system call waits for events on the `Epoll`
@@ -166,25 +289,65 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
     fn epoll_wait(
         &mut self,
         epfd: &OpTy<'tcx>,
-        events: &OpTy<'tcx>,
+        events_op: &OpTy<'tcx>,
         maxevents: &OpTy<'tcx>,
         timeout: &OpTy<'tcx>,
     ) -> InterpResult<'tcx, Scalar> {
         let this = self.eval_context_mut();
 
-        let epfd = this.read_scalar(epfd)?.to_i32()?;
-        let _events = this.read_scalar(events)?.to_pointer(this)?;
-        let _maxevents = this.read_scalar(maxevents)?.to_i32()?;
-        let _timeout = this.read_scalar(timeout)?.to_i32()?;
+        this.check_no_isolation(
+            "`epoll_wait`: The notification returned is nondeterministic as \
+            it depends on interpreter pointer addresses.",
+        )?;
 
-        let Some(mut epfd) = this.machine.fds.get_mut(epfd) else {
+        let epfd = this.read_scalar(epfd)?.to_i32()?;
+        let maxevents = this.read_scalar(maxevents)?.to_i32()?;
+        let event = this.deref_pointer_as(
+            events_op,
+            this.libc_array_ty_layout("epoll_event", maxevents.try_into().unwrap()),
+        )?;
+        let timeout = this.read_scalar(timeout)?.to_i32()?;
+
+        if epfd <= 0 {
+            let einval = this.eval_libc("EINVAL");
+            this.set_last_error(einval)?;
+            return Ok(Scalar::from_i32(-1));
+        }
+        // FIXME: Remove this once blocking is supported.
+        if timeout != 0 {
+            throw_unsup_format!("epoll_wait: timeout value can only be 0");
+        }
+
+        let Some(epfd) = this.machine.fds.dup(epfd) else {
             return Ok(Scalar::from_i32(this.fd_not_found()?));
         };
-        let _epfd = epfd
+        let mut binding = epfd.borrow_mut();
+        let epoll_file_description = &mut binding
             .downcast_mut::<Epoll>()
             .ok_or_else(|| err_unsup_format!("non-epoll FD passed to `epoll_wait`"))?;
 
-        // FIXME return number of events ready when scheme for marking events ready exists
-        throw_unsup_format!("returning ready events from epoll_wait is not yet implemented");
+        let binding = epoll_file_description.get_ready_list();
+        let mut ready_list = binding.borrow_mut();
+        let mut num_of_events: i32 = 0;
+        let mut array_iter = this.project_array_fields(&event)?;
+
+        while let Some((epoll_key, epoll_return)) = ready_list.pop_first() {
+            if epoll_key.0.upgrade().is_some() {
+                // Return notification to the caller if the file description is not fully closed.
+                if let Some(des) = array_iter.next(this)? {
+                    this.write_int_fields_named(
+                        &[
+                            ("events", epoll_return.events.into()),
+                            ("u64", epoll_return.data.into()),
+                        ],
+                        &des.1,
+                    )?;
+                    num_of_events = num_of_events.checked_add(1).unwrap();
+                } else {
+                    break;
+                }
+            }
+        }
+        Ok(Scalar::from_i32(num_of_events))
     }
 }

@@ -3,12 +3,15 @@
 
 use std::any::Any;
 use std::cell::{Ref, RefCell, RefMut};
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::io::{self, ErrorKind, IsTerminal, Read, SeekFrom, Write};
 use std::rc::Rc;
+use std::rc::Weak;
 
 use rustc_target::abi::Size;
 
+use crate::shims::unix::linux::epoll::{EpollEvent, EpollReturn};
 use crate::shims::unix::*;
 use crate::*;
 
@@ -72,6 +75,7 @@ pub trait FileDescription: std::fmt::Debug + Any {
 
     fn close<'tcx>(
         self: Box<Self>,
+        _ecx: &mut MiriInterpCx<'tcx>,
         _communicate_allowed: bool,
     ) -> InterpResult<'tcx, io::Result<()>> {
         throw_unsup_format!("cannot close {}", self.name());
@@ -81,6 +85,19 @@ pub trait FileDescription: std::fmt::Debug + Any {
         // Most FDs are not tty's and the consequence of a wrong `false` are minor,
         // so we use a default impl here.
         false
+    }
+
+    // Check the readiness of epoll-supported file description.
+    fn check_and_update_readiness<'tcx>(
+        &self,
+        _ecx: &mut MiriInterpCx<'tcx>,
+    ) -> InterpResult<'tcx> {
+        throw_unsup_format!("{}: epoll does not support this file description", self.name());
+    }
+    fn get_epoll_events<'tcx>(
+        &mut self,
+    ) -> InterpResult<'tcx, &mut BTreeMap<(i32, i32), Weak<EpollEvent>>> {
+        throw_unsup_format!("{}: epoll does not support this file description", self.name());
     }
 }
 
@@ -200,13 +217,50 @@ impl FileDescriptor {
         RefMut::map(self.0.borrow_mut(), |fd| fd.as_mut())
     }
 
-    pub fn close<'ctx>(self, communicate_allowed: bool) -> InterpResult<'ctx, io::Result<()>> {
+    pub fn close<'tcx>(
+        self,
+        ecx: &mut MiriInterpCx<'tcx>,
+        communicate_allowed: bool,
+    ) -> InterpResult<'tcx, io::Result<()>> {
         // Destroy this `Rc` using `into_inner` so we can call `close` instead of
         // implicitly running the destructor of the file description.
         match Rc::into_inner(self.0) {
-            Some(fd) => RefCell::into_inner(fd).close(communicate_allowed),
+            Some(fd) => RefCell::into_inner(fd).close(ecx, communicate_allowed),
             None => Ok(Ok(())),
         }
+    }
+    pub fn downgrade(&self) -> WeakFileDescriptor {
+        WeakFileDescriptor(Rc::downgrade(&self.0))
+    }
+}
+
+// WeakFileDescriptor is used in epoll ready_list and interest_list to avoid strong references,
+// so the file description can be closed properly.
+#[derive(Clone, Debug, Default)]
+pub struct WeakFileDescriptor(Weak<RefCell<Box<dyn FileDescription>>>);
+
+impl WeakFileDescriptor {
+    pub fn upgrade(&self) -> Option<Rc<RefCell<Box<dyn FileDescription>>>> {
+        self.0.upgrade()
+    }
+}
+
+impl PartialOrd for WeakFileDescriptor {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Eq for WeakFileDescriptor {}
+
+impl PartialEq for WeakFileDescriptor {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0.as_ptr(), other.0.as_ptr())
+    }
+}
+
+impl Ord for WeakFileDescriptor {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.as_ptr().cmp(&other.0.as_ptr())
     }
 }
 
@@ -318,7 +372,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             // If old_fd and new_fd point to the same description, then `dup_fd` ensures we keep the underlying file description alive.
             if let Some(file_descriptor) = this.machine.fds.fds.insert(new_fd, dup_fd) {
                 // Ignore close error (not interpreter's) according to dup2() doc.
-                file_descriptor.close(this.machine.communicate())?.ok();
+                file_descriptor.close(this, this.machine.communicate())?.ok();
             }
         }
         Ok(new_fd)
@@ -385,13 +439,14 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         let fd = this.read_scalar(fd_op)?.to_i32()?;
 
-        let Some(file_descriptor) = this.machine.fds.remove(fd) else {
-            return Ok(Scalar::from_i32(this.fd_not_found()?));
-        };
-        let result = file_descriptor.close(this.machine.communicate())?;
-        // return `0` if close is successful
-        let result = result.map(|()| 0i32);
-        Ok(Scalar::from_i32(this.try_unwrap_io_result(result)?))
+        Ok(Scalar::from_i32(if let Some(file_descriptor) = this.machine.fds.remove(fd) {
+            let result = file_descriptor.close(this, this.machine.communicate())?;
+            // return `0` if close is successful
+            let result = result.map(|()| 0i32);
+            this.try_unwrap_io_result(result)?
+        } else {
+            this.fd_not_found()?
+        }))
     }
 
     /// Function used when a file descriptor does not exist. It returns `Ok(-1)`and sets
@@ -403,6 +458,31 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let ebadf = this.eval_libc("EBADF");
         this.set_last_error(ebadf)?;
         Ok((-1).into())
+    }
+
+    /// Function used to update the ready list of an epoll_event. It takes in all the readiness
+    /// flags of a file description and return event as ready if any of the flag is monitored
+    /// by the epoll_event.
+    fn update_readiness(
+        &self,
+        ready_flags: u32,
+        epoll_events: &BTreeMap<(i32, i32), Weak<EpollEvent>>,
+    ) -> InterpResult<'tcx> {
+        for (_, event) in epoll_events.iter() {
+            if let Some(epoll_event) = event.upgrade() {
+                // Retrieve the same flag between file description readiness and epoll event and
+                // update the ready list.
+                let flags = epoll_event.events & ready_flags;
+                if flags != 0 {
+                    let weak_file_descriptor = epoll_event.weak_file_descriptor.clone();
+                    let epoll_key = (weak_file_descriptor, epoll_event.file_descriptor);
+                    let ready_list = &mut epoll_event.ready_list.borrow_mut();
+                    let epoll_return = EpollReturn::new(flags, epoll_event.data);
+                    ready_list.insert(epoll_key, epoll_return);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Read data from `fd` into buffer specified by `buf` and `count`.

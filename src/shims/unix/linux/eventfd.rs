@@ -1,12 +1,17 @@
 //! Linux `eventfd` implementation.
+use crate::shims::unix::linux::epoll::EpollEvent;
+use std::collections::BTreeMap;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::mem;
+use std::rc::Weak;
 
 use rustc_target::abi::Endian;
 
 use crate::shims::unix::*;
 use crate::{concurrency::VClock, *};
+
+use self::shims::unix::fd::FileDescriptor;
 
 // We'll only do reads and writes in chunks of size u64.
 const U64_ARRAY_SIZE: usize = mem::size_of::<u64>();
@@ -28,6 +33,13 @@ struct Event {
     counter: u64,
     is_nonblock: bool,
     clock: VClock,
+    // epoll_events is a list of epoll_event associated with this file description.
+    // The key is (file descriptor value, epoll file descriptor value).
+    // This will be correct when the same file description is inserted twice to an epoll instance
+    // because their file descriptor values need to be different.
+    // When a file description is inserted to two different epoll instance,
+    // two different epoll_event will exist in epoll_events.
+    epoll_events: BTreeMap<(i32, i32), Weak<EpollEvent>>,
 }
 
 impl FileDescription for Event {
@@ -35,8 +47,32 @@ impl FileDescription for Event {
         "event"
     }
 
+    fn get_epoll_events<'tcx>(
+        &mut self,
+    ) -> InterpResult<'tcx, &mut BTreeMap<(i32, i32), Weak<EpollEvent>>> {
+        Ok(&mut self.epoll_events)
+    }
+
+    fn check_and_update_readiness<'tcx>(&self, ecx: &mut MiriInterpCx<'tcx>) -> InterpResult<'tcx> {
+        // We only check the status of epollin and epollout flag for eventfd. If other event flags
+        // need to be supported in the future, the check should be added here.
+        let epollin = ecx.eval_libc_u32("EPOLLIN");
+        let epollout = ecx.eval_libc_u32("EPOLLOUT");
+        let mut ready_flags = 0;
+        // Check if it is readable.
+        if self.counter != 0 {
+            ready_flags |= epollin;
+        }
+        // Check if it is writable.
+        if self.counter != MAX_COUNTER {
+            ready_flags |= epollout;
+        }
+        ecx.update_readiness(ready_flags, &self.epoll_events)?;
+        Ok(())
+    }
     fn close<'tcx>(
         self: Box<Self>,
+        _ecx: &mut MiriInterpCx<'tcx>,
         _communicate_allowed: bool,
     ) -> InterpResult<'tcx, io::Result<()>> {
         Ok(Ok(()))
@@ -70,6 +106,8 @@ impl FileDescription for Event {
                 Endian::Big => self.counter.to_be_bytes(),
             };
             self.counter = 0;
+            // When any of the event is happened, we check and update the status of all supported flags.
+            self.check_and_update_readiness(ecx)?;
             return Ok(Ok(U64_ARRAY_SIZE));
         }
     }
@@ -114,6 +152,8 @@ impl FileDescription for Event {
                     self.clock.join(clock);
                 }
                 self.counter = new_count;
+                // When any of the event is happened, we check and update the status of all supported flags.
+                self.check_and_update_readiness(ecx)?;
             }
             None | Some(u64::MAX) => {
                 if self.is_nonblock {
@@ -178,11 +218,12 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             throw_unsup_format!("eventfd: encountered unknown unsupported flags {:#x}", flags);
         }
 
-        let fd = this.machine.fds.insert_fd(Event {
+        let fd = this.machine.fds.insert_fd(FileDescriptor::new(Event {
             counter: val.into(),
             is_nonblock,
             clock: VClock::default(),
-        });
+            epoll_events: BTreeMap::new(),
+        }));
         Ok(Scalar::from_i32(fd))
     }
 }
