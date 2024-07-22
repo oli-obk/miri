@@ -72,8 +72,8 @@ impl FileDescription for Epoll {
 
     fn close<'tcx>(
         self: Box<Self>,
-        _ecx: &mut MiriInterpCx<'tcx>,
         _communicate_allowed: bool,
+        _ecx: &mut MiriInterpCx<'tcx>,
     ) -> InterpResult<'tcx, io::Result<()>> {
         Ok(Ok(()))
     }

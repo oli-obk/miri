@@ -75,8 +75,8 @@ pub trait FileDescription: std::fmt::Debug + Any {
 
     fn close<'tcx>(
         self: Box<Self>,
-        _ecx: &mut MiriInterpCx<'tcx>,
         _communicate_allowed: bool,
+        _ecx: &mut MiriInterpCx<'tcx>,
     ) -> InterpResult<'tcx, io::Result<()>> {
         throw_unsup_format!("cannot close {}", self.name());
     }
@@ -94,6 +94,7 @@ pub trait FileDescription: std::fmt::Debug + Any {
     ) -> InterpResult<'tcx> {
         throw_unsup_format!("{}: epoll does not support this file description", self.name());
     }
+
     fn get_epoll_events<'tcx>(
         &mut self,
     ) -> InterpResult<'tcx, &mut BTreeMap<(i32, i32), Weak<EpollEvent>>> {
@@ -225,10 +226,11 @@ impl FileDescriptor {
         // Destroy this `Rc` using `into_inner` so we can call `close` instead of
         // implicitly running the destructor of the file description.
         match Rc::into_inner(self.0) {
-            Some(fd) => RefCell::into_inner(fd).close(ecx, communicate_allowed),
+            Some(fd) => RefCell::into_inner(fd).close(communicate_allowed, ecx),
             None => Ok(Ok(())),
         }
     }
+
     pub fn downgrade(&self) -> WeakFileDescriptor {
         WeakFileDescriptor(Rc::downgrade(&self.0))
     }
@@ -245,16 +247,17 @@ impl WeakFileDescriptor {
     }
 }
 
-impl PartialOrd for WeakFileDescriptor {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Eq for WeakFileDescriptor {}
-
 impl PartialEq for WeakFileDescriptor {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self.0.as_ptr(), other.0.as_ptr())
+    }
+}
+
+impl Eq for WeakFileDescriptor {}
+
+impl PartialOrd for WeakFileDescriptor {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

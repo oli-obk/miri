@@ -96,8 +96,8 @@ impl FileDescription for SocketPair {
 
     fn close<'tcx>(
         self: Box<Self>,
-        ecx: &mut MiriInterpCx<'tcx>,
         _communicate_allowed: bool,
+        ecx: &mut MiriInterpCx<'tcx>,
     ) -> InterpResult<'tcx, io::Result<()>> {
         // This is used to signal socketfd of other side that there is no writer to its readbuf.
         // If the upgrade fails, there is no need to update as all read ends have been dropped.
@@ -160,7 +160,7 @@ impl FileDescription for SocketPair {
         // Conveniently, `read` exists on `VecDeque` and has exactly the desired behavior.
         let actual_read_size = readbuf.buf.read(bytes).unwrap();
         // The readbuf needs to be explicitly dropped because it will cause panic when
-        // check_and_update_readiness borrow it again.
+        // check_and_update_readiness borrows it again.
         drop(readbuf);
         if let Some(peer_fd) = self.peer_fd.upgrade() {
             peer_fd
@@ -211,7 +211,7 @@ impl FileDescription for SocketPair {
         writebuf.buf.extend(&bytes[..actual_write_size]);
 
         // The writebuf needs to be explicitly dropped because it will cause panic when
-        // check_and_update_readiness borrow it again.
+        // check_and_update_readiness borrows it again.
         drop(writebuf);
         // Notification should be provided for peer fd as it became readable.
         if let Some(peer_fd) = self.peer_fd.upgrade() {
@@ -315,7 +315,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let file_descriptor0 = FileDescriptor::new(socketpair_0);
         let file_descriptor1 = FileDescriptor::new(socketpair_1);
 
-        // Expose peer file descriptor to each other.
+        // Expose peer file descriptors to each other.
         let weak_file_descriptor0 = file_descriptor0.downgrade();
         file_descriptor1.borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
             weak_file_descriptor0;

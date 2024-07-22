@@ -241,6 +241,7 @@ fn test_two_same_fd_in_same_epoll_instance() {
         vec![(expected_event, expected_value), (expected_event, expected_value)]
     ));
 }
+
 fn test_epoll_eventfd() {
     // Create an eventfd instance and write to it.
     let flags = libc::EFD_NONBLOCK | libc::EFD_CLOEXEC;
@@ -273,6 +274,7 @@ fn test_epoll_eventfd() {
     let expected_value = u64::try_from(fd).unwrap();
     assert!(check_epoll_wait::<8>(epfd, vec![(expected_event, expected_value)]));
 }
+
 fn test_pointer() {
     // Create an epoll instance.
     let epfd = unsafe { libc::epoll_create1(0) };
