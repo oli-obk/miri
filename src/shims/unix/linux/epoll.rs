@@ -7,8 +7,6 @@ use crate::shims::unix::fd::WeakFileDescriptor;
 use crate::shims::unix::*;
 use crate::*;
 
-use self::shims::unix::fd::FileDescriptor;
-
 /// An `Epoll` file descriptor connects file handles and epoll events
 #[derive(Clone, Debug, Default)]
 struct Epoll {
@@ -104,8 +102,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let mut epoll_instance = Epoll::default();
         epoll_instance.ready_list = Rc::new(RefCell::new(BTreeMap::new()));
 
-        let fd = this.machine.fds.insert_fd(FileDescriptor::new(Epoll::default()));
-        Ok(Scalar::from_i32(fd))
+        let fd_value = this.machine.fds.insert_fd(Epoll::default());
+        Ok(Scalar::from_i32(fd_value))
     }
 
     /// This function performs control operations on the `Epoll` instance referred to by the file
@@ -229,6 +227,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             // If it is epoll_ctl_mod, the original epoll_event stored in the file description
             // will be modified.
             target_file_description
+                .file_description
                 .get_epoll_events()?
                 .insert((fd, epfd_value), Rc::downgrade(&event));
             // Modify the epoll_event if it already exists (epoll_ctl_mod),
@@ -236,7 +235,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             interest_list.insert(epoll_key, event);
 
             // Readiness will be updated immediately when the epoll_event is added or modified.
-            target_file_description.check_and_update_readiness(this)?;
+            //TODO: rename variable
+            target_file_description.file_description.check_and_update_readiness(this)?;
 
             return Ok(Scalar::from_i32(0));
         } else if op == epoll_ctl_del {

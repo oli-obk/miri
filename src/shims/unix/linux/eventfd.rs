@@ -11,8 +11,6 @@ use rustc_target::abi::Endian;
 use crate::shims::unix::*;
 use crate::{concurrency::VClock, *};
 
-use self::shims::unix::fd::FileDescriptor;
-
 // We'll only do reads and writes in chunks of size u64.
 const U64_ARRAY_SIZE: usize = mem::size_of::<u64>();
 
@@ -219,12 +217,12 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             throw_unsup_format!("eventfd: encountered unknown unsupported flags {:#x}", flags);
         }
 
-        let fd = this.machine.fds.insert_fd(FileDescriptor::new(Event {
+        let fd_value = this.machine.fds.insert_fd(Event {
             counter: val.into(),
             is_nonblock,
             clock: VClock::default(),
             epoll_events: BTreeMap::new(),
-        }));
-        Ok(Scalar::from_i32(fd))
+        });
+        Ok(Scalar::from_i32(fd_value))
     }
 }

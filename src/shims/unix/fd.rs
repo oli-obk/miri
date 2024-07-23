@@ -205,19 +205,32 @@ impl FileDescription for NullOutput {
         Ok(Ok(bytes.len()))
     }
 }
+/// Structure contains both the file description and its unique identifier.
+#[derive(Clone, Debug)]
+pub struct FileDescWithID<T: FileDescription + ?Sized> {
+    id: usize,
+    pub file_description: Box<T>,
+}
+
+impl<T: FileDescription + ?Sized> FileDescWithID<T> {
+    pub fn get_id(&self) -> usize {
+        self.id
+    }
+}
 
 #[derive(Clone, Debug)]
-pub struct FileDescriptor(Rc<RefCell<Box<dyn FileDescription>>>);
+pub struct FileDescriptor(Rc<RefCell<FileDescWithID<dyn FileDescription>>>);
 
 impl FileDescriptor {
     pub fn borrow(&self) -> Ref<'_, dyn FileDescription> {
-        Ref::map(self.0.borrow(), |fd| fd.as_ref())
+        Ref::map(self.0.borrow(), |fd| fd.file_description.as_ref())
     }
 
     pub fn borrow_mut(&self) -> RefMut<'_, dyn FileDescription> {
-        RefMut::map(self.0.borrow_mut(), |fd| fd.as_mut())
+        RefMut::map(self.0.borrow_mut(), |fd| fd.file_description.as_mut())
     }
 
+    //TODO: make ecx the last argument of close.
     pub fn close<'tcx>(
         self,
         ecx: &mut MiriInterpCx<'tcx>,
@@ -226,7 +239,7 @@ impl FileDescriptor {
         // Destroy this `Rc` using `into_inner` so we can call `close` instead of
         // implicitly running the destructor of the file description.
         match Rc::into_inner(self.0) {
-            Some(fd) => RefCell::into_inner(fd).close(communicate_allowed, ecx),
+            Some(fd) => RefCell::into_inner(fd).file_description.close(communicate_allowed, ecx),
             None => Ok(Ok(())),
         }
     }
@@ -239,10 +252,10 @@ impl FileDescriptor {
 // WeakFileDescriptor is used in epoll ready_list and interest_list to avoid strong references,
 // so the file description can be closed properly.
 #[derive(Clone, Debug, Default)]
-pub struct WeakFileDescriptor(Weak<RefCell<Box<dyn FileDescription>>>);
+pub struct WeakFileDescriptor(Weak<RefCell<FileDescWithID<dyn FileDescription>>>);
 
 impl WeakFileDescriptor {
-    pub fn upgrade(&self) -> Option<Rc<RefCell<Box<dyn FileDescription>>>> {
+    pub fn upgrade(&self) -> Option<Rc<RefCell<FileDescWithID<dyn FileDescription>>>> {
         self.0.upgrade()
     }
 }
@@ -271,6 +284,8 @@ impl Ord for WeakFileDescriptor {
 #[derive(Debug)]
 pub struct FdTable {
     pub fds: BTreeMap<i32, FileDescriptor>,
+    /// Unique identifier for file description, used to differentiate between various file description.
+    file_description_id: usize,
 }
 
 impl VisitProvenance for FdTable {
@@ -281,7 +296,7 @@ impl VisitProvenance for FdTable {
 
 impl FdTable {
     fn new() -> Self {
-        FdTable { fds: BTreeMap::new() }
+        FdTable { fds: BTreeMap::new(), file_description_id: 0 }
     }
     pub(crate) fn init(mute_stdout_stderr: bool) -> FdTable {
         let mut fds = FdTable::new();
@@ -296,9 +311,13 @@ impl FdTable {
         fds
     }
 
-    /// Insert a file descriptor to the FdTable.
+    /// Insert a file descriptor to the FdTable and increment the file_description_id by 1.
     pub fn insert_fd<T: FileDescription>(&mut self, fd: T) -> i32 {
-        let file_handle = FileDescriptor(Rc::new(RefCell::new(Box::new(fd))));
+        let file_handle = FileDescriptor(Rc::new(RefCell::new(FileDescWithID {
+            id: self.file_description_id,
+            file_description: Box::new(fd),
+        })));
+        self.file_description_id = self.file_description_id.checked_add(1).unwrap();
         self.insert_fd_with_min_fd(file_handle, 0)
     }
 

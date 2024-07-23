@@ -8,7 +8,6 @@ use crate::shims::unix::fd::WeakFileDescriptor;
 use crate::shims::unix::*;
 use crate::{concurrency::VClock, *};
 
-use self::fd::FileDescriptor;
 use self::shims::unix::linux::epoll::EpollEvent;
 
 /// The maximum capacity of the socketpair buffer in bytes.
@@ -108,7 +107,7 @@ impl FileDescription for SocketPair {
         // Notify peer fd that closed has happened.
         if let Some(peer_fd) = self.peer_fd.upgrade() {
             let mut binding = peer_fd.borrow_mut();
-            let peer_socketpair = binding.downcast_mut::<SocketPair>().unwrap();
+            let peer_socketpair = binding.file_description.downcast_mut::<SocketPair>().unwrap();
             peer_socketpair.peer_closed = true;
             // When any of the event happened, we check and update the status of all supported flags
             // of peer fd.
@@ -165,6 +164,7 @@ impl FileDescription for SocketPair {
         if let Some(peer_fd) = self.peer_fd.upgrade() {
             peer_fd
                 .borrow_mut()
+                .file_description
                 .downcast_mut::<SocketPair>()
                 .unwrap()
                 .check_and_update_readiness(ecx)?;
@@ -217,6 +217,7 @@ impl FileDescription for SocketPair {
         if let Some(peer_fd) = self.peer_fd.upgrade() {
             peer_fd
                 .borrow_mut()
+                .file_description
                 .downcast_mut::<SocketPair>()
                 .unwrap()
                 .check_and_update_readiness(ecx)?;
@@ -312,21 +313,27 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             is_nonblock: is_sock_nonblock,
             epoll_events: BTreeMap::new(),
         };
-        let file_descriptor0 = FileDescriptor::new(socketpair_0);
-        let file_descriptor1 = FileDescriptor::new(socketpair_1);
-
-        // Expose peer file descriptors to each other.
-        let weak_file_descriptor0 = file_descriptor0.downgrade();
-        file_descriptor1.borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
-            weak_file_descriptor0;
-        let weak_file_descriptor1 = file_descriptor1.downgrade();
-        file_descriptor0.borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
-            weak_file_descriptor1;
-
         let fds = &mut this.machine.fds;
 
-        let sv0 = fds.insert_fd(file_descriptor0);
-        let sv1 = fds.insert_fd(file_descriptor1);
+        let sv0 = fds.insert_fd(socketpair_0);
+        let sv1 = fds.insert_fd(socketpair_1);
+
+        let file_descriptor0 = fds.dup(sv0);
+        let file_descriptor1 = fds.dup(sv1);
+
+        // Expose peer file descriptors to each other.
+        //TODO: check if this can be improved
+        let weak_file_descriptor0 = file_descriptor0.clone().unwrap().downgrade();
+        file_descriptor1
+            .clone()
+            .unwrap()
+            .borrow_mut()
+            .downcast_mut::<SocketPair>()
+            .unwrap()
+            .peer_fd = weak_file_descriptor0;
+        let weak_file_descriptor1 = file_descriptor1.unwrap().downgrade();
+        file_descriptor0.unwrap().borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
+            weak_file_descriptor1;
 
         let sv0 = Scalar::from_int(sv0, sv.layout.size);
         let sv1 = Scalar::from_int(sv1, sv.layout.size);
