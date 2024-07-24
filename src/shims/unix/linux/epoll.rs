@@ -268,7 +268,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
             let fd_with_id = binding.borrow_mut();
             // Readiness will be updated immediately when the epoll_event is added or modified.
-            fd_with_id.file_description.check_and_update_readiness(this)?;
+            fd_with_id.get_file_description_ref().check_and_update_readiness(this)?;
 
             return Ok(Scalar::from_i32(0));
         } else if op == epoll_ctl_del {

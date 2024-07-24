@@ -203,7 +203,16 @@ impl FileDescription for NullOutput {
 #[derive(Clone, Debug)]
 pub struct FileDescWithID<T: FileDescription + ?Sized> {
     id: usize,
-    pub file_description: Box<T>,
+    file_description: Box<T>,
+}
+
+impl<T: FileDescription + ?Sized> FileDescWithID<T> {
+    pub fn get_file_description_ref(&self) -> &T {
+        self.file_description.as_ref()
+    }
+    pub fn get_file_description_mut(&mut self) -> &mut T {
+        self.file_description.as_mut()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -278,7 +287,7 @@ impl Ord for WeakFileDescriptor {
 pub struct FdTable {
     pub fds: BTreeMap<i32, FileDescriptor>,
     /// Unique identifier for file description, used to differentiate between various file description.
-    file_description_id: usize,
+    next_file_description_id: usize,
 }
 
 impl VisitProvenance for FdTable {
@@ -289,7 +298,7 @@ impl VisitProvenance for FdTable {
 
 impl FdTable {
     fn new() -> Self {
-        FdTable { fds: BTreeMap::new(), file_description_id: 0 }
+        FdTable { fds: BTreeMap::new(), next_file_description_id: 0 }
     }
     pub(crate) fn init(mute_stdout_stderr: bool) -> FdTable {
         let mut fds = FdTable::new();
@@ -307,10 +316,10 @@ impl FdTable {
     /// Insert a file descriptor to the FdTable and increment the file_description_id by 1.
     pub fn insert_fd<T: FileDescription>(&mut self, fd: T) -> i32 {
         let file_handle = FileDescriptor(Rc::new(RefCell::new(FileDescWithID {
-            id: self.file_description_id,
+            id: self.next_file_description_id,
             file_description: Box::new(fd),
         })));
-        self.file_description_id = self.file_description_id.checked_add(1).unwrap();
+        self.next_file_description_id = self.next_file_description_id.checked_add(1).unwrap();
         self.insert_fd_with_min_fd(file_handle, 0)
     }
 
