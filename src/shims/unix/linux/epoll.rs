@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use crate::shims::unix::fd::WeakFileDescriptor;
 use crate::shims::unix::*;
@@ -11,7 +11,7 @@ use crate::*;
 #[derive(Clone, Debug, Default)]
 struct Epoll {
     /// The file descriptors we are watching, and what we are watching for.
-    interest_list: BTreeMap<(WeakFileDescriptor, i32), Rc<EpollEvent>>,
+    interest_list: BTreeMap<(WeakFileDescriptor, i32), Rc<RefCell<EpollEvent>>>,
     // ready_list is an Rc because EpollEvents need to hold a reference to update
     // it.
     ready_list: Rc<RefCell<BTreeMap<(WeakFileDescriptor, i32), EpollReturn>>>,
@@ -74,6 +74,36 @@ impl FileDescription for Epoll {
         _ecx: &mut MiriInterpCx<'tcx>,
     ) -> InterpResult<'tcx, io::Result<()>> {
         Ok(Ok(()))
+    }
+}
+
+/// The table of all epoll_events.
+pub struct EpollEventTable(BTreeMap<usize, Vec<Weak<RefCell<EpollEvent>>>>);
+
+//TODO: wrap the usize with RunningID
+impl EpollEventTable {
+    pub(crate) fn new() -> Self {
+        EpollEventTable(BTreeMap::new())
+    }
+
+    pub fn insert_epoll_event(&mut self, id: usize, fd: Weak<RefCell<EpollEvent>>) {
+        match self.0.get_mut(&id) {
+            Some(fds) => {
+                fds.push(fd);
+            }
+            None => {
+                let vec = vec![fd];
+                self.0.insert(id, vec);
+            }
+        }
+    }
+
+    pub fn get_epoll_event(&mut self, id: usize) -> Option<&mut Vec<Weak<RefCell<EpollEvent>>>> {
+        self.0.get_mut(&id)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -212,31 +242,33 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 }
             }
 
+            let id = file_descriptor.get_id();
             // Create an epoll_event.
             let weak_file_descriptor = file_descriptor.downgrade();
             let binding = weak_file_descriptor.upgrade().unwrap();
-            let mut target_file_description = binding.borrow_mut();
-            let event = Rc::new(EpollEvent {
+            let event = Rc::new(RefCell::new(EpollEvent {
                 file_descriptor: fd,
                 weak_file_descriptor,
                 events,
                 data,
                 ready_list: Rc::clone(ready_list),
-            });
-            // If it is epoll_ctl_add, a new epoll_event will be inserted.
-            // If it is epoll_ctl_mod, the original epoll_event stored in the file description
-            // will be modified.
-            target_file_description
-                .file_description
-                .get_epoll_events()?
-                .insert((fd, epfd_value), Rc::downgrade(&event));
-            // Modify the epoll_event if it already exists (epoll_ctl_mod),
-            // and insert if it doesn't (epoll_ctl_add).
-            interest_list.insert(epoll_key, event);
+            }));
 
+            if op == epoll_ctl_add {
+                // Insert an epoll_event to global epfd map.
+                this.machine.epoll_events.insert_epoll_event(id, Rc::downgrade(&event));
+                interest_list.insert(epoll_key, event);
+            } else {
+                // Directly modify the epoll_event so the global epoll_event list
+                // will be updated too.
+                let mut epoll_event = interest_list.get_mut(&epoll_key).unwrap().borrow_mut();
+                epoll_event.events = events;
+                epoll_event.data = data;
+            }
+
+            let fd_with_id = binding.borrow_mut();
             // Readiness will be updated immediately when the epoll_event is added or modified.
-            //TODO: rename variable
-            target_file_description.file_description.check_and_update_readiness(this)?;
+            fd_with_id.file_description.check_and_update_readiness(this)?;
 
             return Ok(Scalar::from_i32(0));
         } else if op == epoll_ctl_del {

@@ -11,7 +11,7 @@ use std::rc::Weak;
 
 use rustc_target::abi::Size;
 
-use crate::shims::unix::linux::epoll::{EpollEvent, EpollReturn};
+use crate::shims::unix::linux::epoll::EpollReturn;
 use crate::shims::unix::*;
 use crate::*;
 
@@ -92,12 +92,6 @@ pub trait FileDescription: std::fmt::Debug + Any {
         &self,
         _ecx: &mut MiriInterpCx<'tcx>,
     ) -> InterpResult<'tcx> {
-        throw_unsup_format!("{}: epoll does not support this file description", self.name());
-    }
-
-    fn get_epoll_events<'tcx>(
-        &mut self,
-    ) -> InterpResult<'tcx, &mut BTreeMap<(i32, i32), Weak<EpollEvent>>> {
         throw_unsup_format!("{}: epoll does not support this file description", self.name());
     }
 }
@@ -212,12 +206,6 @@ pub struct FileDescWithID<T: FileDescription + ?Sized> {
     pub file_description: Box<T>,
 }
 
-impl<T: FileDescription + ?Sized> FileDescWithID<T> {
-    pub fn get_id(&self) -> usize {
-        self.id
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct FileDescriptor(Rc<RefCell<FileDescWithID<dyn FileDescription>>>);
 
@@ -246,6 +234,11 @@ impl FileDescriptor {
 
     pub fn downgrade(&self) -> WeakFileDescriptor {
         WeakFileDescriptor(Rc::downgrade(&self.0))
+    }
+
+    //TODO: wrap the usize in running id
+    pub fn get_id(&self) -> usize {
+        self.0.borrow().id
     }
 }
 
@@ -482,25 +475,26 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         Ok((-1).into())
     }
 
-    /// Function used to update the ready list of an epoll_event. It takes in all the readiness
-    /// flags of a file description and return event as ready if any of the flag is monitored
-    /// by the epoll_event.
-    fn update_readiness(
-        &self,
-        ready_flags: u32,
-        epoll_events: &BTreeMap<(i32, i32), Weak<EpollEvent>>,
-    ) -> InterpResult<'tcx> {
-        for (_, event) in epoll_events.iter() {
-            if let Some(epoll_event) = event.upgrade() {
-                // Retrieve the same flag between file description readiness and epoll event and
-                // update the ready list.
-                let flags = epoll_event.events & ready_flags;
-                if flags != 0 {
-                    let weak_file_descriptor = epoll_event.weak_file_descriptor.clone();
-                    let epoll_key = (weak_file_descriptor, epoll_event.file_descriptor);
-                    let ready_list = &mut epoll_event.ready_list.borrow_mut();
-                    let epoll_return = EpollReturn::new(flags, epoll_event.data);
-                    ready_list.insert(epoll_key, epoll_return);
+    /// Function used to update the readiness of all epoll_events associated to a specific
+    /// file description.
+    fn update_readiness(&mut self, fd_id: usize, ready_flags: u32) -> InterpResult<'tcx> {
+        let this = self.eval_context_mut();
+        // Get a list of epoll_fds that registered a specific file description.
+        if let Some(epoll_events) = this.machine.epoll_events.get_epoll_event(fd_id) {
+            // Find and update the file description we want.
+            for weak_epoll_event in epoll_events {
+                if let Some(epoll_event) = weak_epoll_event.upgrade() {
+                    // Retrieve the same flag between file description readiness and epoll event and
+                    // update the ready list.
+                    let epoll_event = epoll_event.borrow();
+                    let flags = epoll_event.events & ready_flags;
+                    if flags != 0 {
+                        let weak_file_descriptor = epoll_event.weak_file_descriptor.clone();
+                        let epoll_key = (weak_file_descriptor, epoll_event.file_descriptor);
+                        let ready_list = &mut epoll_event.ready_list.borrow_mut();
+                        let epoll_return = EpollReturn::new(flags, epoll_event.data);
+                        ready_list.insert(epoll_key, epoll_return);
+                    }
                 }
             }
         }

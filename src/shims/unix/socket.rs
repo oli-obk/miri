@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::io;
 use std::io::{Error, ErrorKind, Read};
 use std::rc::{Rc, Weak};
@@ -7,8 +7,6 @@ use std::rc::{Rc, Weak};
 use crate::shims::unix::fd::WeakFileDescriptor;
 use crate::shims::unix::*;
 use crate::{concurrency::VClock, *};
-
-use self::shims::unix::linux::epoll::EpollEvent;
 
 /// The maximum capacity of the socketpair buffer in bytes.
 /// This number is arbitrary as the value can always
@@ -25,13 +23,8 @@ struct SocketPair {
     peer_fd: WeakFileDescriptor,
     is_nonblock: bool,
     peer_closed: bool,
-    // epoll_events is a list of epoll_event associated with this file description.
-    // The key is (file descriptor value, epoll file descriptor value).
-    // This will be correct when the same file description is inserted twice to an epoll instance
-    // because their file descriptor values need to be different.
-    // When a file description is inserted to two different epoll instance,
-    // two different epoll_event will exist in epoll_events.
-    epoll_events: BTreeMap<(i32, i32), Weak<EpollEvent>>,
+    // The file description ID.
+    id: usize,
 }
 
 #[derive(Debug)]
@@ -49,18 +42,17 @@ impl FileDescription for SocketPair {
         "socketpair"
     }
 
-    fn get_epoll_events<'tcx>(
-        &mut self,
-    ) -> InterpResult<'tcx, &mut BTreeMap<(i32, i32), Weak<EpollEvent>>> {
-        Ok(&mut self.epoll_events)
-    }
-
     fn check_and_update_readiness<'tcx>(&self, ecx: &mut MiriInterpCx<'tcx>) -> InterpResult<'tcx> {
         // We only check the status of EPOLLIN, EPOLLOUT and EPOLLRDHUP flag. If other event flags
         // need to be supported in the future, the check should be added here.
-        if self.epoll_events.is_empty() {
+
+        // This check is crucial for this function to not be invoked in macos.
+        // epoll would never be invoked in macos, so the epoll_event table would always
+        // be empty.
+        if ecx.machine.epoll_events.is_empty() {
             return Ok(());
         }
+
         let epollin = ecx.eval_libc_u32("EPOLLIN");
         let epollout = ecx.eval_libc_u32("EPOLLOUT");
         let epollrdhup = ecx.eval_libc_u32("EPOLLRDHUP");
@@ -89,7 +81,7 @@ impl FileDescription for SocketPair {
             // even though there is no data in the buffer.
             ready_flags |= epollin;
         }
-        ecx.update_readiness(ready_flags, &self.epoll_events)?;
+        ecx.update_readiness(self.id, ready_flags)?;
         Ok(())
     }
 
@@ -303,7 +295,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             peer_fd: WeakFileDescriptor::default(),
             peer_closed: false,
             is_nonblock: is_sock_nonblock,
-            epoll_events: BTreeMap::new(),
+            id: usize::default(),
         };
         let socketpair_1 = SocketPair {
             writebuf: Rc::downgrade(&buffer2),
@@ -311,30 +303,33 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             peer_fd: WeakFileDescriptor::default(),
             peer_closed: false,
             is_nonblock: is_sock_nonblock,
-            epoll_events: BTreeMap::new(),
+            id: usize::default(),
         };
-        let fds = &mut this.machine.fds;
 
+        // Insert the file description to the fd table.
+        let fds = &mut this.machine.fds;
         let sv0 = fds.insert_fd(socketpair_0);
         let sv1 = fds.insert_fd(socketpair_1);
 
-        let file_descriptor0 = fds.dup(sv0);
-        let file_descriptor1 = fds.dup(sv1);
+        // Get weak file descriptor and file description id value.
+        let file_descriptor0 = fds.dup(sv0).unwrap();
+        let id0 = file_descriptor0.clone().get_id();
+        let file_descriptor1 = fds.dup(sv1).unwrap();
+        let id1 = file_descriptor1.clone().get_id();
+        let weak_file_descriptor0 = file_descriptor0.clone().downgrade();
+        let weak_file_descriptor1 = file_descriptor1.clone().downgrade();
 
-        // Expose peer file descriptors to each other.
-        //TODO: check if this can be improved
-        let weak_file_descriptor0 = file_descriptor0.clone().unwrap().downgrade();
-        file_descriptor1
-            .clone()
-            .unwrap()
-            .borrow_mut()
-            .downcast_mut::<SocketPair>()
-            .unwrap()
-            .peer_fd = weak_file_descriptor0;
-        let weak_file_descriptor1 = file_descriptor1.unwrap().downgrade();
-        file_descriptor0.unwrap().borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
+        // Update peer_fd and id field.
+        //TODO: tidy up, how is it possible to deduplicate, unwrap always free value.
+        file_descriptor1.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
+            weak_file_descriptor0;
+        file_descriptor1.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().id = id1;
+
+        file_descriptor0.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
             weak_file_descriptor1;
+        file_descriptor0.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().id = id0;
 
+        // Return socketpair file description value to the caller.
         let sv0 = Scalar::from_int(sv0, sv.layout.size);
         let sv1 = Scalar::from_int(sv1, sv.layout.size);
 

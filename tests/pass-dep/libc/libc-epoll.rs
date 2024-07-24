@@ -6,13 +6,13 @@ use std::convert::TryInto;
 use std::mem::MaybeUninit;
 
 fn main() {
-    test_two_same_fd_in_same_epoll_instance();
     test_two_epoll_instance();
     test_epoll_ctl_mod();
     test_epoll_socketpair();
     test_epoll_eventfd();
     test_epoll_ctl_del();
     test_pointer();
+    test_two_same_fd_in_same_epoll_instance();
 }
 
 fn check_epoll_wait<const N: usize>(
@@ -125,6 +125,8 @@ fn test_epoll_ctl_mod() {
     };
     let res = unsafe { libc::epoll_ctl(epfd, libc::EPOLL_CTL_MOD, fds[1], &mut ev) };
     assert_ne!(res, -1);
+
+    // Close the other side of the socketpair to invoke EPOLLRDHUP.
     let res = unsafe { libc::close(fds[0]) };
     assert_eq!(res, 0);
 

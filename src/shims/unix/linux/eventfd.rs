@@ -1,10 +1,7 @@
 //! Linux `eventfd` implementation.
-use crate::shims::unix::linux::epoll::EpollEvent;
-use std::collections::BTreeMap;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::mem;
-use std::rc::Weak;
 
 use rustc_target::abi::Endian;
 
@@ -31,13 +28,8 @@ struct Event {
     counter: u64,
     is_nonblock: bool,
     clock: VClock,
-    // epoll_events is a list of epoll_event associated with this file description.
-    // The key is (file descriptor value, epoll file descriptor value).
-    // This will be correct when the same file description is inserted twice to an epoll instance
-    // because their file descriptor values need to be different.
-    // When a file description is inserted to two different epoll instance,
-    // two different epoll_event will exist in epoll_events.
-    epoll_events: BTreeMap<(i32, i32), Weak<EpollEvent>>,
+    // The file description ID.
+    id: usize,
 }
 
 impl FileDescription for Event {
@@ -45,15 +37,10 @@ impl FileDescription for Event {
         "event"
     }
 
-    fn get_epoll_events<'tcx>(
-        &mut self,
-    ) -> InterpResult<'tcx, &mut BTreeMap<(i32, i32), Weak<EpollEvent>>> {
-        Ok(&mut self.epoll_events)
-    }
-
     fn check_and_update_readiness<'tcx>(&self, ecx: &mut MiriInterpCx<'tcx>) -> InterpResult<'tcx> {
         // We only check the status of epollin and epollout flag for eventfd. If other event flags
         // need to be supported in the future, the check should be added here.
+
         let epollin = ecx.eval_libc_u32("EPOLLIN");
         let epollout = ecx.eval_libc_u32("EPOLLOUT");
         let mut ready_flags = 0;
@@ -65,7 +52,7 @@ impl FileDescription for Event {
         if self.counter != MAX_COUNTER {
             ready_flags |= epollout;
         }
-        ecx.update_readiness(ready_flags, &self.epoll_events)?;
+        ecx.update_readiness(self.id, ready_flags)?;
         Ok(())
     }
 
@@ -217,12 +204,19 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             throw_unsup_format!("eventfd: encountered unknown unsupported flags {:#x}", flags);
         }
 
-        let fd_value = this.machine.fds.insert_fd(Event {
+        let fds = &mut this.machine.fds;
+
+        let fd_value = fds.insert_fd(Event {
             counter: val.into(),
             is_nonblock,
             clock: VClock::default(),
-            epoll_events: BTreeMap::new(),
+            id: usize::default(),
         });
+        let file_descriptor = fds.dup(fd_value);
+        let fd_id = file_descriptor.clone().unwrap().get_id();
+        file_descriptor.clone().unwrap().borrow_mut().downcast_mut::<Event>().unwrap().id = fd_id;
+
+        // Update the assigned file description value.
         Ok(Scalar::from_i32(fd_value))
     }
 }
