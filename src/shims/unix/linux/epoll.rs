@@ -98,8 +98,8 @@ impl EpollEventTable {
         }
     }
 
-    pub fn get_epoll_event(&mut self, id: usize) -> Option<&mut Vec<Weak<RefCell<EpollEvent>>>> {
-        self.0.get_mut(&id)
+    pub fn get_epoll_event(&self, id: usize) -> Option<&[Weak<RefCell<EpollEvent>>]> {
+        Some(self.0.get(&id)?)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -245,7 +245,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             let id = file_descriptor.get_id();
             // Create an epoll_event.
             let weak_file_descriptor = file_descriptor.downgrade();
-            let binding = weak_file_descriptor.upgrade().unwrap();
             let event = Rc::new(RefCell::new(EpollEvent {
                 file_descriptor: fd,
                 weak_file_descriptor,
@@ -266,9 +265,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 epoll_event.data = data;
             }
 
-            let fd_with_id = binding.borrow_mut();
             // Readiness will be updated immediately when the epoll_event is added or modified.
-            fd_with_id.check_and_update_readiness(this)?;
+            file_descriptor.check_and_update_readiness(this)?;
 
             return Ok(Scalar::from_i32(0));
         } else if op == epoll_ctl_del {

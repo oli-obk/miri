@@ -23,8 +23,6 @@ struct SocketPair {
     peer_fd: WeakFileDescriptor,
     is_nonblock: bool,
     peer_closed: bool,
-    // The file description ID.
-    id: usize,
 }
 
 #[derive(Debug)]
@@ -42,16 +40,9 @@ impl FileDescription for SocketPair {
         "socketpair"
     }
 
-    fn check_and_update_readiness<'tcx>(&self, ecx: &mut MiriInterpCx<'tcx>) -> InterpResult<'tcx> {
+    fn get_epoll_ready_flags<'tcx>(&self, ecx: &MiriInterpCx<'tcx>) -> InterpResult<'tcx, u32> {
         // We only check the status of EPOLLIN, EPOLLOUT and EPOLLRDHUP flag. If other event flags
         // need to be supported in the future, the check should be added here.
-
-        // This check is crucial for this function to not be invoked in macos.
-        // epoll would never be invoked in macos, so the epoll_event table would always
-        // be empty.
-        if ecx.machine.epoll_events.is_empty() {
-            return Ok(());
-        }
 
         let epollin = ecx.eval_libc_u32("EPOLLIN");
         let epollout = ecx.eval_libc_u32("EPOLLOUT");
@@ -81,8 +72,7 @@ impl FileDescription for SocketPair {
             // even though there is no data in the buffer.
             ready_flags |= epollin;
         }
-        ecx.update_readiness(self.id, ready_flags)?;
-        Ok(())
+        Ok(ready_flags)
     }
 
     fn close<'tcx>(
@@ -98,12 +88,10 @@ impl FileDescription for SocketPair {
 
         // Notify peer fd that closed has happened.
         if let Some(peer_fd) = self.peer_fd.upgrade() {
-            let mut binding = peer_fd.borrow_mut();
-            let peer_socketpair = binding.downcast_mut::<SocketPair>().unwrap();
-            peer_socketpair.peer_closed = true;
+            peer_fd.borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_closed = true;
             // When any of the event happened, we check and update the status of all supported flags
             // of peer fd.
-            peer_socketpair.check_and_update_readiness(ecx)?;
+            peer_fd.check_and_update_readiness(ecx)?;
         }
         Ok(Ok(()))
     }
@@ -154,11 +142,7 @@ impl FileDescription for SocketPair {
         // check_and_update_readiness borrows it again.
         drop(readbuf);
         if let Some(peer_fd) = self.peer_fd.upgrade() {
-            peer_fd
-                .borrow_mut()
-                .downcast_ref::<SocketPair>()
-                .unwrap()
-                .check_and_update_readiness(ecx)?;
+            peer_fd.check_and_update_readiness(ecx)?;
         }
         return Ok(Ok(actual_read_size));
     }
@@ -206,11 +190,7 @@ impl FileDescription for SocketPair {
         drop(writebuf);
         // Notification should be provided for peer fd as it became readable.
         if let Some(peer_fd) = self.peer_fd.upgrade() {
-            peer_fd
-                .borrow_mut()
-                .downcast_ref::<SocketPair>()
-                .unwrap()
-                .check_and_update_readiness(ecx)?;
+            peer_fd.check_and_update_readiness(ecx)?;
         }
         return Ok(Ok(actual_write_size));
     }
@@ -293,7 +273,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             peer_fd: WeakFileDescriptor::default(),
             peer_closed: false,
             is_nonblock: is_sock_nonblock,
-            id: usize::default(),
         };
         let socketpair_1 = SocketPair {
             writebuf: Rc::downgrade(&buffer2),
@@ -301,7 +280,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             peer_fd: WeakFileDescriptor::default(),
             peer_closed: false,
             is_nonblock: is_sock_nonblock,
-            id: usize::default(),
         };
 
         // Insert the file description to the fd table.
@@ -311,9 +289,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         // Get weak file descriptor and file description id value.
         let file_descriptor0 = fds.dup(sv0).unwrap();
-        let id0 = file_descriptor0.clone().get_id();
         let file_descriptor1 = fds.dup(sv1).unwrap();
-        let id1 = file_descriptor1.clone().get_id();
         let weak_file_descriptor0 = file_descriptor0.clone().downgrade();
         let weak_file_descriptor1 = file_descriptor1.clone().downgrade();
 
@@ -321,11 +297,9 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         //TODO: tidy up, how is it possible to deduplicate, unwrap always free value.
         file_descriptor1.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
             weak_file_descriptor0;
-        file_descriptor1.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().id = id1;
 
         file_descriptor0.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
             weak_file_descriptor1;
-        file_descriptor0.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().id = id0;
 
         // Return socketpair file description value to the caller.
         let sv0 = Scalar::from_int(sv0, sv.layout.size);

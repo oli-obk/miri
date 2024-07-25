@@ -28,8 +28,6 @@ struct Event {
     counter: u64,
     is_nonblock: bool,
     clock: VClock,
-    // The file description ID.
-    id: usize,
 }
 
 impl FileDescription for Event {
@@ -37,7 +35,7 @@ impl FileDescription for Event {
         "event"
     }
 
-    fn check_and_update_readiness<'tcx>(&self, ecx: &mut MiriInterpCx<'tcx>) -> InterpResult<'tcx> {
+    fn get_epoll_ready_flags<'tcx>(&self, ecx: &MiriInterpCx<'tcx>) -> InterpResult<'tcx, u32> {
         // We only check the status of epollin and epollout flag for eventfd. If other event flags
         // need to be supported in the future, the check should be added here.
 
@@ -52,8 +50,7 @@ impl FileDescription for Event {
         if self.counter != MAX_COUNTER {
             ready_flags |= epollout;
         }
-        ecx.update_readiness(self.id, ready_flags)?;
-        Ok(())
+        Ok(ready_flags)
     }
 
     fn close<'tcx>(
@@ -92,8 +89,6 @@ impl FileDescription for Event {
                 Endian::Big => self.counter.to_be_bytes(),
             };
             self.counter = 0;
-            // When any of the event is happened, we check and update the status of all supported flags.
-            self.check_and_update_readiness(ecx)?;
             return Ok(Ok(U64_ARRAY_SIZE));
         }
     }
@@ -138,8 +133,6 @@ impl FileDescription for Event {
                     self.clock.join(clock);
                 }
                 self.counter = new_count;
-                // When any of the event is happened, we check and update the status of all supported flags.
-                self.check_and_update_readiness(ecx)?;
             }
             None | Some(u64::MAX) => {
                 if self.is_nonblock {
@@ -206,16 +199,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         let fds = &mut this.machine.fds;
 
-        let fd_value = fds.insert_fd(Event {
-            counter: val.into(),
-            is_nonblock,
-            clock: VClock::default(),
-            id: usize::default(),
-        });
-        let file_descriptor = fds.dup(fd_value);
-        let fd_id = file_descriptor.clone().unwrap().get_id();
-        file_descriptor.clone().unwrap().borrow_mut().downcast_mut::<Event>().unwrap().id = fd_id;
-
+        let fd_value =
+            fds.insert_fd(Event { counter: val.into(), is_nonblock, clock: VClock::default() });
         // Update the assigned file description value.
         Ok(Scalar::from_i32(fd_value))
     }
