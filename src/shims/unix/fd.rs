@@ -206,15 +206,6 @@ pub struct FileDescWithID<T: FileDescription + ?Sized> {
     file_description: Box<T>,
 }
 
-impl<T: FileDescription + ?Sized> FileDescWithID<T> {
-    pub fn get_file_description_ref(&self) -> &T {
-        self.file_description.as_ref()
-    }
-    pub fn get_file_description_mut(&mut self) -> &mut T {
-        self.file_description.as_mut()
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct FileDescriptor(Rc<RefCell<FileDescWithID<dyn FileDescription>>>);
 
@@ -257,8 +248,8 @@ impl FileDescriptor {
 pub struct WeakFileDescriptor(Weak<RefCell<FileDescWithID<dyn FileDescription>>>);
 
 impl WeakFileDescriptor {
-    pub fn upgrade(&self) -> Option<Rc<RefCell<FileDescWithID<dyn FileDescription>>>> {
-        self.0.upgrade()
+    pub fn upgrade(&self) -> Option<FileDescriptor> {
+        Some(FileDescriptor(self.0.upgrade()?))
     }
 }
 

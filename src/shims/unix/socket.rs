@@ -99,8 +99,7 @@ impl FileDescription for SocketPair {
         // Notify peer fd that closed has happened.
         if let Some(peer_fd) = self.peer_fd.upgrade() {
             let mut binding = peer_fd.borrow_mut();
-            let peer_socketpair =
-                binding.get_file_description_mut().downcast_mut::<SocketPair>().unwrap();
+            let peer_socketpair = binding.downcast_mut::<SocketPair>().unwrap();
             peer_socketpair.peer_closed = true;
             // When any of the event happened, we check and update the status of all supported flags
             // of peer fd.
@@ -157,7 +156,6 @@ impl FileDescription for SocketPair {
         if let Some(peer_fd) = self.peer_fd.upgrade() {
             peer_fd
                 .borrow_mut()
-                .get_file_description_ref()
                 .downcast_ref::<SocketPair>()
                 .unwrap()
                 .check_and_update_readiness(ecx)?;
@@ -210,7 +208,6 @@ impl FileDescription for SocketPair {
         if let Some(peer_fd) = self.peer_fd.upgrade() {
             peer_fd
                 .borrow_mut()
-                .get_file_description_ref()
                 .downcast_ref::<SocketPair>()
                 .unwrap()
                 .check_and_update_readiness(ecx)?;
