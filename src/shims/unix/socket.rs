@@ -290,8 +290,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         // Get weak file descriptor and file description id value.
         let file_descriptor0 = fds.dup(sv0).unwrap();
         let file_descriptor1 = fds.dup(sv1).unwrap();
-        let weak_file_descriptor0 = file_descriptor0.clone().downgrade();
-        let weak_file_descriptor1 = file_descriptor1.clone().downgrade();
+        let weak_file_descriptor0 = file_descriptor0.downgrade();
+        let weak_file_descriptor1 = file_descriptor1.downgrade();
 
         // Update peer_fd and id field.
         //TODO: tidy up, how is it possible to deduplicate, unwrap always free value.
