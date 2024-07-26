@@ -105,6 +105,10 @@ impl EpollEventTable {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    pub fn remove(&mut self, id: usize) {
+        self.0.remove(&id);
+    }
 }
 
 impl<'tcx> EvalContextExt<'tcx> for crate::MiriInterpCx<'tcx> {}

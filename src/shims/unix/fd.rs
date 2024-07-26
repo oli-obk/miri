@@ -222,8 +222,14 @@ impl FileDescriptor {
     ) -> InterpResult<'tcx, io::Result<()>> {
         // Destroy this `Rc` using `into_inner` so we can call `close` instead of
         // implicitly running the destructor of the file description.
+        let id = self.get_id();
         match Rc::into_inner(self.0) {
-            Some(fd) => RefCell::into_inner(fd.file_description).close(communicate_allowed, ecx),
+            Some(fd) => {
+                // Remove entry from the global epoll_event table.
+                ecx.machine.epoll_events.remove(id);
+
+                RefCell::into_inner(fd.file_description).close(communicate_allowed, ecx)
+            }
             None => Ok(Ok(())),
         }
     }
