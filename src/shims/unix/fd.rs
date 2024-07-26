@@ -238,11 +238,33 @@ impl FileDescriptor {
         self.0.id
     }
 
+    /// Function used to retrieve the readiness of a file description and update the readiness of
+    /// all epoll_events associated to it.
     pub(crate) fn check_and_update_readiness<'tcx>(
         &self,
         ecx: &mut InterpCx<'tcx, MiriMachine<'tcx>>,
     ) -> InterpResult<'tcx, ()> {
-        ecx.update_readiness(self)
+        // Get a list of epoll_fds that registered a specific file description.
+        if let Some(epoll_events) = ecx.machine.epoll_events.get_epoll_event(self.get_id()) {
+            let ready_flags = self.borrow_mut().get_epoll_ready_flags(ecx)?;
+            // Find and update the file description we want.
+            for weak_epoll_event in epoll_events {
+                if let Some(epoll_event) = weak_epoll_event.upgrade() {
+                    // Retrieve the same flag between file description readiness and epoll event and
+                    // update the ready list.
+                    let epoll_event = epoll_event.borrow();
+                    let flags = epoll_event.events & ready_flags;
+                    if flags != 0 {
+                        let weak_file_descriptor = epoll_event.weak_file_descriptor.clone();
+                        let epoll_key = (weak_file_descriptor, epoll_event.file_descriptor);
+                        let ready_list = &mut epoll_event.ready_list.borrow_mut();
+                        let epoll_return = EpollReturn::new(flags, epoll_event.data);
+                        ready_list.insert(epoll_key, epoll_return);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -477,33 +499,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let ebadf = this.eval_libc("EBADF");
         this.set_last_error(ebadf)?;
         Ok((-1).into())
-    }
-
-    /// Function used to update the readiness of all epoll_events associated to a specific
-    /// file description.
-    fn update_readiness(&mut self, fd: &FileDescriptor) -> InterpResult<'tcx> {
-        let this = self.eval_context_mut();
-        // Get a list of epoll_fds that registered a specific file description.
-        if let Some(epoll_events) = this.machine.epoll_events.get_epoll_event(fd.get_id()) {
-            let ready_flags = fd.borrow_mut().get_epoll_ready_flags(this)?;
-            // Find and update the file description we want.
-            for weak_epoll_event in epoll_events {
-                if let Some(epoll_event) = weak_epoll_event.upgrade() {
-                    // Retrieve the same flag between file description readiness and epoll event and
-                    // update the ready list.
-                    let epoll_event = epoll_event.borrow();
-                    let flags = epoll_event.events & ready_flags;
-                    if flags != 0 {
-                        let weak_file_descriptor = epoll_event.weak_file_descriptor.clone();
-                        let epoll_key = (weak_file_descriptor, epoll_event.file_descriptor);
-                        let ready_list = &mut epoll_event.ready_list.borrow_mut();
-                        let epoll_return = EpollReturn::new(flags, epoll_event.data);
-                        ready_list.insert(epoll_key, epoll_return);
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Read data from `fd` into buffer specified by `buf` and `count`.
