@@ -295,7 +295,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         // Update peer_fd and id field.
         //TODO: tidy up, how is it possible to deduplicate, unwrap always free value.
-        file_descriptor1.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
+        file_descriptor1.borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
             weak_file_descriptor0;
 
         file_descriptor0.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
