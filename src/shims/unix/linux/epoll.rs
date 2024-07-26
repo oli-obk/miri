@@ -98,8 +98,15 @@ impl EpollEventTable {
         }
     }
 
-    pub fn get_epoll_event(&self, id: usize) -> Option<&[Weak<RefCell<EpollEvent>>]> {
+    pub fn get_epoll_event(&self, id: usize) -> Option<&Vec<Weak<RefCell<EpollEvent>>>> {
         Some(self.0.get(&id)?)
+    }
+
+    pub fn get_epoll_event_mut(
+        &mut self,
+        id: usize,
+    ) -> Option<&mut Vec<Weak<RefCell<EpollEvent>>>> {
+        Some(self.0.get_mut(&id)?)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -275,16 +282,29 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             return Ok(Scalar::from_i32(0));
         } else if op == epoll_ctl_del {
             let epoll_key = (weak_file_descriptor, fd);
-            // Remove epoll_event from interest list.
-            if interest_list.remove(&epoll_key).is_none() {
+
+            // Remove epoll_event from interest_list.
+            let Some(epoll_event) = interest_list.remove(&epoll_key) else {
                 let enoent = this.eval_libc("ENOENT");
                 this.set_last_error(enoent)?;
                 return Ok(Scalar::from_i32(-1));
-            }
+            };
+            let id = epoll_event.borrow().weak_file_descriptor.upgrade().unwrap().get_id();
+            // All related Weak<EpollEvent> will fail to upgrade after the drop.
+            drop(epoll_event);
 
             // Remove related epoll_return from ready list.
-            let mut ready_list = ready_list.borrow_mut();
-            ready_list.remove(&epoll_key);
+            ready_list.borrow_mut().remove(&epoll_key);
+
+            // Remove dangling epoll_event from global epoll_event table.
+            // .unwrap() below should succeed because the file description id must have registered
+            // at least one epoll_event, if not, it will fail when removing epoll_event from
+            // interest list.
+            this.machine
+                .epoll_events
+                .get_epoll_event_mut(id)
+                .unwrap()
+                .retain(|event| event.upgrade().is_some());
 
             return Ok(Scalar::from_i32(0));
         }
