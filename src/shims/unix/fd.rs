@@ -215,11 +215,10 @@ impl FileDescriptor {
         RefMut::map(self.0.file_description.borrow_mut(), |fd| fd.as_mut())
     }
 
-    //TODO: make ecx the last argument of close.
     pub fn close<'tcx>(
         self,
-        ecx: &mut MiriInterpCx<'tcx>,
         communicate_allowed: bool,
+        ecx: &mut MiriInterpCx<'tcx>,
     ) -> InterpResult<'tcx, io::Result<()>> {
         // Destroy this `Rc` using `into_inner` so we can call `close` instead of
         // implicitly running the destructor of the file description.
@@ -413,7 +412,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             // If old_fd and new_fd point to the same description, then `dup_fd` ensures we keep the underlying file description alive.
             if let Some(file_descriptor) = this.machine.fds.fds.insert(new_fd, dup_fd) {
                 // Ignore close error (not interpreter's) according to dup2() doc.
-                file_descriptor.close(this, this.machine.communicate())?.ok();
+                file_descriptor.close(this.machine.communicate(), this)?.ok();
             }
         }
         Ok(new_fd)
@@ -481,7 +480,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let fd = this.read_scalar(fd_op)?.to_i32()?;
 
         Ok(Scalar::from_i32(if let Some(file_descriptor) = this.machine.fds.remove(fd) {
-            let result = file_descriptor.close(this, this.machine.communicate())?;
+            let result = file_descriptor.close(this.machine.communicate(), this)?;
             // return `0` if close is successful
             let result = result.map(|()| 0i32);
             this.try_unwrap_io_result(result)?
