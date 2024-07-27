@@ -4,7 +4,7 @@ use std::io;
 use std::io::{Error, ErrorKind, Read};
 use std::rc::{Rc, Weak};
 
-use crate::shims::unix::fd::WeakFileDescriptor;
+use crate::shims::unix::fd::WeakFileDescriptionRef;
 use crate::shims::unix::*;
 use crate::{concurrency::VClock, *};
 
@@ -20,7 +20,7 @@ struct SocketPair {
     // gone, and trigger EPIPE as appropriate.
     writebuf: Weak<RefCell<Buffer>>,
     readbuf: Rc<RefCell<Buffer>>,
-    peer_fd: WeakFileDescriptor,
+    peer_fd: WeakFileDescriptionRef,
     is_nonblock: bool,
     peer_closed: bool,
 }
@@ -270,14 +270,14 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let socketpair_0 = SocketPair {
             writebuf: Rc::downgrade(&buffer1),
             readbuf: Rc::clone(&buffer2),
-            peer_fd: WeakFileDescriptor::default(),
+            peer_fd: WeakFileDescriptionRef::default(),
             peer_closed: false,
             is_nonblock: is_sock_nonblock,
         };
         let socketpair_1 = SocketPair {
             writebuf: Rc::downgrade(&buffer2),
             readbuf: Rc::clone(&buffer1),
-            peer_fd: WeakFileDescriptor::default(),
+            peer_fd: WeakFileDescriptionRef::default(),
             peer_closed: false,
             is_nonblock: is_sock_nonblock,
         };
@@ -290,16 +290,15 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         // Get weak file descriptor and file description id value.
         let file_descriptor0 = fds.dup(sv0).unwrap();
         let file_descriptor1 = fds.dup(sv1).unwrap();
-        let weak_file_descriptor0 = file_descriptor0.downgrade();
-        let weak_file_descriptor1 = file_descriptor1.downgrade();
+        let weak_fd_ref0 = file_descriptor0.downgrade();
+        let weak_fd_ref1 = file_descriptor1.downgrade();
 
         // Update peer_fd and id field.
         //TODO: tidy up, how is it possible to deduplicate, unwrap always free value.
-        file_descriptor1.borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
-            weak_file_descriptor0;
+        file_descriptor1.borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd = weak_fd_ref0;
 
         file_descriptor0.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
-            weak_file_descriptor1;
+            weak_fd_ref1;
 
         // Return socketpair file description value to the caller.
         let sv0 = Scalar::from_int(sv0, sv.layout.size);

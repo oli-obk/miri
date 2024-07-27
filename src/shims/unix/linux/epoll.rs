@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::rc::{Rc, Weak};
 
-use crate::shims::unix::fd::{FdID, WeakFileDescriptor};
+use crate::shims::unix::fd::{FdID, WeakFileDescriptionRef};
 use crate::shims::unix::*;
 use crate::*;
 
@@ -11,10 +11,10 @@ use crate::*;
 #[derive(Clone, Debug, Default)]
 struct Epoll {
     /// The file descriptors we are watching, and what we are watching for.
-    interest_list: BTreeMap<(WeakFileDescriptor, i32), Rc<RefCell<EpollEvent>>>,
+    interest_list: BTreeMap<(WeakFileDescriptionRef, i32), Rc<RefCell<EpollEvent>>>,
     // ready_list is an Rc because EpollEvents need to hold a reference to update
     // it.
-    ready_list: Rc<RefCell<BTreeMap<(WeakFileDescriptor, i32), EpollReturn>>>,
+    ready_list: Rc<RefCell<BTreeMap<(WeakFileDescriptionRef, i32), EpollReturn>>>,
 }
 
 /// EpollReturn contains information that will be returned by epoll_wait,
@@ -47,18 +47,18 @@ pub struct EpollEvent {
     // The file descriptor value associated with this epoll_event.
     pub file_descriptor: i32,
     // The file descriptor struct associated with this epoll_event.
-    pub weak_file_descriptor: WeakFileDescriptor,
+    pub weak_file_description_ref: WeakFileDescriptionRef,
     pub events: u32,
     // libc's data field in epoll_event can store integer or pointer,
     // but only u64 is supported for now.
     // https://man7.org/linux/man-pages/man3/epoll_event.3type.html
     pub data: u64,
     // Ready list of the epoll instance under which this epoll_event is registered.
-    pub ready_list: Rc<RefCell<BTreeMap<(WeakFileDescriptor, i32), EpollReturn>>>,
+    pub ready_list: Rc<RefCell<BTreeMap<(WeakFileDescriptionRef, i32), EpollReturn>>>,
 }
 
 impl Epoll {
-    fn get_ready_list(&self) -> Rc<RefCell<BTreeMap<(WeakFileDescriptor, i32), EpollReturn>>> {
+    fn get_ready_list(&self) -> Rc<RefCell<BTreeMap<(WeakFileDescriptionRef, i32), EpollReturn>>> {
         Rc::clone(&self.ready_list)
     }
 }
@@ -201,7 +201,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let Some(file_descriptor) = this.machine.fds.dup(fd) else {
             return Ok(Scalar::from_i32(this.fd_not_found()?));
         };
-        let weak_file_descriptor = file_descriptor.downgrade();
+        let weak_fd_ref = file_descriptor.downgrade();
 
         if op == epoll_ctl_add || op == epoll_ctl_mod {
             // Read event bitmask and data from epoll_event struct.
@@ -232,7 +232,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 );
             }
 
-            let epoll_key = (weak_file_descriptor, fd);
+            //TODO: check if it is necessary to store weak_fd_ref in epoll_event
+            let epoll_key = (weak_fd_ref.clone(), fd);
 
             // Check the existence of fd in the interest list.
             if op == epoll_ctl_add {
@@ -251,10 +252,9 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
             let id = file_descriptor.get_id();
             // Create an epoll_event.
-            let weak_file_descriptor = file_descriptor.downgrade();
             let event = Rc::new(RefCell::new(EpollEvent {
                 file_descriptor: fd,
-                weak_file_descriptor,
+                weak_file_description_ref: weak_fd_ref,
                 events,
                 data,
                 ready_list: Rc::clone(ready_list),
@@ -277,7 +277,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
             return Ok(Scalar::from_i32(0));
         } else if op == epoll_ctl_del {
-            let epoll_key = (weak_file_descriptor, fd);
+            let epoll_key = (weak_fd_ref, fd);
 
             // Remove epoll_event from interest_list.
             let Some(epoll_event) = interest_list.remove(&epoll_key) else {
@@ -285,7 +285,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 this.set_last_error(enoent)?;
                 return Ok(Scalar::from_i32(-1));
             };
-            let id = epoll_event.borrow().weak_file_descriptor.upgrade().unwrap().get_id();
+            let id = epoll_event.borrow().weak_file_description_ref.upgrade().unwrap().get_id();
             // All related Weak<EpollEvent> will fail to upgrade after the drop.
             drop(epoll_event);
 

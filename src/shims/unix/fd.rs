@@ -234,8 +234,8 @@ impl FileDescriptor {
         }
     }
 
-    pub fn downgrade(&self) -> WeakFileDescriptor {
-        WeakFileDescriptor { weak_ref: Rc::downgrade(&self.0), id: self.get_id() }
+    pub fn downgrade(&self) -> WeakFileDescriptionRef {
+        WeakFileDescriptionRef { weak_ref: Rc::downgrade(&self.0), id: self.get_id() }
     }
 
     pub fn get_id(&self) -> FdID {
@@ -259,8 +259,8 @@ impl FileDescriptor {
                     let epoll_event = epoll_event.borrow();
                     let flags = epoll_event.events & ready_flags;
                     if flags != 0 {
-                        let weak_file_descriptor = epoll_event.weak_file_descriptor.clone();
-                        let epoll_key = (weak_file_descriptor, epoll_event.file_descriptor);
+                        let weak_fd_ref = epoll_event.weak_file_description_ref.clone();
+                        let epoll_key = (weak_fd_ref, epoll_event.file_descriptor);
                         let ready_list = &mut epoll_event.ready_list.borrow_mut();
                         let epoll_return = EpollReturn::new(flags, epoll_event.data);
                         ready_list.insert(epoll_key, epoll_return);
@@ -275,32 +275,32 @@ impl FileDescriptor {
 // WeakFileDescriptor is used in epoll ready_list and interest_list to avoid strong references,
 // so the file description can be closed properly.
 #[derive(Clone, Debug, Default)]
-pub struct WeakFileDescriptor {
+pub struct WeakFileDescriptionRef {
     weak_ref: Weak<FileDescWithID<dyn FileDescription>>,
     id: FdID,
 }
 
-impl WeakFileDescriptor {
+impl WeakFileDescriptionRef {
     pub fn upgrade(&self) -> Option<FileDescriptor> {
         Some(FileDescriptor(self.weak_ref.upgrade()?))
     }
 }
 
-impl PartialEq for WeakFileDescriptor {
+impl PartialEq for WeakFileDescriptionRef {
     fn eq(&self, other: &Self) -> bool {
         self.id.eq(&other.id)
     }
 }
 
-impl Eq for WeakFileDescriptor {}
+impl Eq for WeakFileDescriptionRef {}
 
-impl PartialOrd for WeakFileDescriptor {
+impl PartialOrd for WeakFileDescriptionRef {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for WeakFileDescriptor {
+impl Ord for WeakFileDescriptionRef {
     fn cmp(&self, other: &Self) -> Ordering {
         self.id.cmp(&other.id)
     }
