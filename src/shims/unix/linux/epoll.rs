@@ -11,21 +11,23 @@ use crate::*;
 #[derive(Clone, Debug, Default)]
 struct Epoll {
     /// A map of epoll_interests registered under this epoll instance.
-    /// Each entry is differentiated using the ID of FileDescriptionRef and
-    /// the file descriptor value assigned.
+    /// Each entry is differentiated using FileDescriptionRef ID and
+    /// file descriptor value.
     interest_list: BTreeMap<(WeakFileDescriptionRef, i32), Rc<RefCell<EpollInterest>>>,
-    /// ready_list is an Rc because EpollInterest need to hold a reference to update
-    /// it.
+    /// A map of EpollReturn that will be returned when `epoll_wait` is called.
+    /// Similar to interest_list, the entry is also differentiated using the FileDescriptionRef ID
+    /// and file descriptor value.
+    // This is an Rc because EpollInterest need to hold a reference to update
+    // it.
     ready_list: Rc<RefCell<BTreeMap<(WeakFileDescriptionRef, i32), EpollReturn>>>,
 }
 
-/// EpollReturn contains information that will be returned by epoll_wait,
-/// and stored in ready list.
+/// EpollReturn contains information that will be returned by epoll_wait.
 #[derive(Debug)]
 pub struct EpollReturn {
-    // Events that happened to the file description.
+    /// Events that happened to the file description.
     events: u32,
-    // Original data retrieved from `epoll_interest`
+    /// Original data retrieved from `epoll_event` during `epoll_ctl`.
     data: u64,
 }
 
@@ -37,9 +39,10 @@ impl EpollReturn {
         self.events |= flag;
     }
 }
-
-//TODO: update documentation here
-/// Epoll Events associate events with data.
+/// EpollInterest registers the file description information to an epoll
+/// instance during a successful `epoll_ctl` call. It also stores additional
+/// information needed to check and update the readiness state for `epoll_wait`.
+///
 /// `events` and `data` field matches the `epoll_event` struct defined
 /// by the epoll_ctl man page. For more information
 /// see the man page:
@@ -47,16 +50,18 @@ impl EpollReturn {
 /// <https://man7.org/linux/man-pages/man2/epoll_ctl.2.html>
 #[derive(Clone, Debug)]
 pub struct EpollInterest {
-    // The file descriptor value associated with this epoll_interest.
+    /// The file descriptor value of the file description registered.
     pub file_descriptor: i32,
-    // The file descriptor struct associated with this epoll_interest.
+    /// A weak reference to the file description registered.
     pub weak_file_description_ref: WeakFileDescriptionRef,
+    /// The events bitmask retrieved from `epoll_event`.
     pub events: u32,
-    // libc's data field in epoll_event can store integer or pointer,
-    // but only u64 is supported for now.
-    // https://man7.org/linux/man-pages/man3/epoll_event.3type.html
+    /// The data retrieved from `epoll_event`.
+    /// libc's data field in epoll_event can store integer or pointer,
+    /// but only u64 is supported for now.
+    /// https://man7.org/linux/man-pages/man3/epoll_event.3type.html
     pub data: u64,
-    // Ready list of the epoll instance under which this epoll_interest is registered.
+    /// Ready list of the epoll instance under which this epoll_interest is stored.
     pub ready_list: Rc<RefCell<BTreeMap<(WeakFileDescriptionRef, i32), EpollReturn>>>,
 }
 
