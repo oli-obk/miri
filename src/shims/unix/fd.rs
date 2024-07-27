@@ -227,8 +227,8 @@ impl FileDescriptionRef {
         let id = self.get_id();
         match Rc::into_inner(self.0) {
             Some(fd) => {
-                // Remove entry from the global epoll_event table.
-                ecx.machine.epoll_events.remove(id);
+                // Remove entry from the global epoll_interest table.
+                ecx.machine.epoll_interests.remove(id);
 
                 RefCell::into_inner(fd.file_description).close(communicate_allowed, ecx)
             }
@@ -245,26 +245,27 @@ impl FileDescriptionRef {
     }
 
     /// Function used to retrieve the readiness of a file description and update the readiness of
-    /// all epoll_events associated to it.
+    /// all epoll_interests associated to it.
     pub(crate) fn check_and_update_readiness<'tcx>(
         &self,
         ecx: &mut InterpCx<'tcx, MiriMachine<'tcx>>,
     ) -> InterpResult<'tcx, ()> {
         // Get a list of epoll_fds that registered a specific file description.
-        if let Some(epoll_events) = ecx.machine.epoll_events.get_epoll_event(self.get_id()) {
+        if let Some(epoll_interests) = ecx.machine.epoll_interests.get_epoll_interest(self.get_id())
+        {
             let ready_flags = self.borrow_mut().get_epoll_ready_flags(ecx)?;
             // Find and update the file description we want.
-            for weak_epoll_event in epoll_events {
-                if let Some(epoll_event) = weak_epoll_event.upgrade() {
-                    // Retrieve the same flag between file description readiness and epoll event and
+            for weak_epoll_interest in epoll_interests {
+                if let Some(epoll_interest) = weak_epoll_interest.upgrade() {
+                    // Retrieve the same flag between file description readiness and epoll interest and
                     // update the ready list.
-                    let epoll_event = epoll_event.borrow();
-                    let flags = epoll_event.events & ready_flags;
+                    let epoll_interest = epoll_interest.borrow();
+                    let flags = epoll_interest.events & ready_flags;
                     if flags != 0 {
-                        let weak_fd_ref = epoll_event.weak_file_description_ref.clone();
-                        let epoll_key = (weak_fd_ref, epoll_event.file_descriptor);
-                        let ready_list = &mut epoll_event.ready_list.borrow_mut();
-                        let epoll_return = EpollReturn::new(flags, epoll_event.data);
+                        let weak_fd_ref = epoll_interest.weak_file_description_ref.clone();
+                        let epoll_key = (weak_fd_ref, epoll_interest.file_descriptor);
+                        let ready_list = &mut epoll_interest.ready_list.borrow_mut();
+                        let epoll_return = EpollReturn::new(flags, epoll_interest.data);
                         ready_list.insert(epoll_key, epoll_return);
                     }
                 }

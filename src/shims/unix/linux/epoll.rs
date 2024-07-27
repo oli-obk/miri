@@ -10,12 +10,12 @@ use crate::*;
 /// An `Epoll` file descriptor connects file handles and epoll events
 #[derive(Clone, Debug, Default)]
 struct Epoll {
-    /// A map of epoll_events registered under this epoll instance.
+    /// A map of epoll_interests registered under this epoll instance.
     /// Each entry is differentiated using the ID of FileDescriptionRef and
     /// the file descriptor value assigned.
-    interest_list: BTreeMap<(WeakFileDescriptionRef, i32), Rc<RefCell<EpollEvent>>>,
-    // ready_list is an Rc because EpollEvents need to hold a reference to update
-    // it.
+    interest_list: BTreeMap<(WeakFileDescriptionRef, i32), Rc<RefCell<EpollInterest>>>,
+    /// ready_list is an Rc because EpollInterest need to hold a reference to update
+    /// it.
     ready_list: Rc<RefCell<BTreeMap<(WeakFileDescriptionRef, i32), EpollReturn>>>,
 }
 
@@ -25,7 +25,7 @@ struct Epoll {
 pub struct EpollReturn {
     // Events that happened to the file description.
     events: u32,
-    // Original data retrieved from `epoll_event`
+    // Original data retrieved from `epoll_interest`
     data: u64,
 }
 
@@ -38,6 +38,7 @@ impl EpollReturn {
     }
 }
 
+//TODO: update documentation here
 /// Epoll Events associate events with data.
 /// `events` and `data` field matches the `epoll_event` struct defined
 /// by the epoll_ctl man page. For more information
@@ -45,17 +46,17 @@ impl EpollReturn {
 ///
 /// <https://man7.org/linux/man-pages/man2/epoll_ctl.2.html>
 #[derive(Clone, Debug)]
-pub struct EpollEvent {
-    // The file descriptor value associated with this epoll_event.
+pub struct EpollInterest {
+    // The file descriptor value associated with this epoll_interest.
     pub file_descriptor: i32,
-    // The file descriptor struct associated with this epoll_event.
+    // The file descriptor struct associated with this epoll_interest.
     pub weak_file_description_ref: WeakFileDescriptionRef,
     pub events: u32,
     // libc's data field in epoll_event can store integer or pointer,
     // but only u64 is supported for now.
     // https://man7.org/linux/man-pages/man3/epoll_event.3type.html
     pub data: u64,
-    // Ready list of the epoll instance under which this epoll_event is registered.
+    // Ready list of the epoll instance under which this epoll_interest is registered.
     pub ready_list: Rc<RefCell<BTreeMap<(WeakFileDescriptionRef, i32), EpollReturn>>>,
 }
 
@@ -79,15 +80,15 @@ impl FileDescription for Epoll {
     }
 }
 
-/// The table of all epoll_events.
-pub struct EpollEventTable(BTreeMap<FdID, Vec<Weak<RefCell<EpollEvent>>>>);
+/// The table of all epoll_interests.
+pub struct EpollInterestTable(BTreeMap<FdID, Vec<Weak<RefCell<EpollInterest>>>>);
 
-impl EpollEventTable {
+impl EpollInterestTable {
     pub(crate) fn new() -> Self {
-        EpollEventTable(BTreeMap::new())
+        EpollInterestTable(BTreeMap::new())
     }
 
-    pub fn insert_epoll_event(&mut self, id: FdID, fd: Weak<RefCell<EpollEvent>>) {
+    pub fn insert_epoll_interest(&mut self, id: FdID, fd: Weak<RefCell<EpollInterest>>) {
         match self.0.get_mut(&id) {
             Some(fds) => {
                 fds.push(fd);
@@ -99,11 +100,14 @@ impl EpollEventTable {
         }
     }
 
-    pub fn get_epoll_event(&self, id: FdID) -> Option<&Vec<Weak<RefCell<EpollEvent>>>> {
+    pub fn get_epoll_interest(&self, id: FdID) -> Option<&Vec<Weak<RefCell<EpollInterest>>>> {
         Some(self.0.get(&id)?)
     }
 
-    pub fn get_epoll_event_mut(&mut self, id: FdID) -> Option<&mut Vec<Weak<RefCell<EpollEvent>>>> {
+    pub fn get_epoll_interest_mut(
+        &mut self,
+        id: FdID,
+    ) -> Option<&mut Vec<Weak<RefCell<EpollInterest>>>> {
         Some(self.0.get_mut(&id)?)
     }
 
@@ -234,7 +238,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 );
             }
 
-            //TODO: check if it is necessary to store weak_fd_ref in epoll_event
+            //TODO: check if it is necessary to store weak_fd_ref in epoll_interest
             let epoll_key = (weak_fd_ref.clone(), fd);
 
             // Check the existence of fd in the interest list.
@@ -253,8 +257,8 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             }
 
             let id = file_descriptor.get_id();
-            // Create an epoll_event.
-            let event = Rc::new(RefCell::new(EpollEvent {
+            // Create an epoll_interest.
+            let interest = Rc::new(RefCell::new(EpollInterest {
                 file_descriptor: fd,
                 weak_file_description_ref: weak_fd_ref,
                 events,
@@ -263,44 +267,44 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             }));
 
             if op == epoll_ctl_add {
-                // Insert an epoll_event to global epfd map.
-                this.machine.epoll_events.insert_epoll_event(id, Rc::downgrade(&event));
-                interest_list.insert(epoll_key, event);
+                // Insert an epoll_interest to global epoll_interest list.
+                this.machine.epoll_interests.insert_epoll_interest(id, Rc::downgrade(&interest));
+                interest_list.insert(epoll_key, interest);
             } else {
-                // Directly modify the epoll_event so the global epoll_event list
+                // Directly modify the epoll_interest so the global epoll_interest list
                 // will be updated too.
-                let mut epoll_event = interest_list.get_mut(&epoll_key).unwrap().borrow_mut();
-                epoll_event.events = events;
-                epoll_event.data = data;
+                let mut epoll_interest = interest_list.get_mut(&epoll_key).unwrap().borrow_mut();
+                epoll_interest.events = events;
+                epoll_interest.data = data;
             }
 
-            // Readiness will be updated immediately when the epoll_event is added or modified.
+            // Readiness will be updated immediately when the epoll_interest is added or modified.
             file_descriptor.check_and_update_readiness(this)?;
 
             return Ok(Scalar::from_i32(0));
         } else if op == epoll_ctl_del {
             let epoll_key = (weak_fd_ref, fd);
 
-            // Remove epoll_event from interest_list.
-            let Some(epoll_event) = interest_list.remove(&epoll_key) else {
+            // Remove epoll_interest from interest_list.
+            let Some(epoll_interest) = interest_list.remove(&epoll_key) else {
                 let enoent = this.eval_libc("ENOENT");
                 this.set_last_error(enoent)?;
                 return Ok(Scalar::from_i32(-1));
             };
-            let id = epoll_event.borrow().weak_file_description_ref.upgrade().unwrap().get_id();
-            // All related Weak<EpollEvent> will fail to upgrade after the drop.
-            drop(epoll_event);
+            let id = epoll_interest.borrow().weak_file_description_ref.upgrade().unwrap().get_id();
+            // All related Weak<EpollInterest> will fail to upgrade after the drop.
+            drop(epoll_interest);
 
-            // Remove related epoll_return from ready list.
+            // Remove related epoll_interest from ready list.
             ready_list.borrow_mut().remove(&epoll_key);
 
-            // Remove dangling epoll_event from global epoll_event table.
+            // Remove dangling epoll_interest from global epoll_interest table.
             // .unwrap() below should succeed because the file description id must have registered
-            // at least one epoll_event, if not, it will fail when removing epoll_event from
+            // at least one epoll_interest, if not, it will fail when removing epoll_interest from
             // interest list.
             this.machine
-                .epoll_events
-                .get_epoll_event_mut(id)
+                .epoll_interests
+                .get_epoll_interest_mut(id)
                 .unwrap()
                 .retain(|event| event.upgrade().is_some());
 
