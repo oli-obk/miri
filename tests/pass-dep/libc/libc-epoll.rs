@@ -1,4 +1,3 @@
-//@compile-flags: -Zmiri-disable-isolation
 //@only-target-linux
 
 #![feature(exposed_provenance)] // Needed for fn test_pointer()

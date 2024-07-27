@@ -345,11 +345,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
     ) -> InterpResult<'tcx, Scalar> {
         let this = self.eval_context_mut();
 
-        this.check_no_isolation(
-            "`epoll_wait`: The notification returned is nondeterministic as \
-            it depends on interpreter pointer addresses.",
-        )?;
-
         let epfd = this.read_scalar(epfd)?.to_i32()?;
         let maxevents = this.read_scalar(maxevents)?.to_i32()?;
         let event = this.deref_pointer_as(
