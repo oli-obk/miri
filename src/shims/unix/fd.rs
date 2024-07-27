@@ -244,7 +244,7 @@ impl FileDescriptionRef {
         self.0.id.clone()
     }
 
-    /// Function used to retrieve the readiness event status of a file description and inserts
+    /// Function used to retrieve the readiness event status of a file description and insert
     ///  an `EpollReturn` into the ready list if the file description is ready.
     pub(crate) fn check_and_update_readiness<'tcx>(
         &self,
