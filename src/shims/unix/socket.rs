@@ -89,8 +89,8 @@ impl FileDescription for SocketPair {
         // Notify peer fd that closed has happened.
         if let Some(peer_fd) = self.peer_fd.upgrade() {
             peer_fd.borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_closed = true;
-            // When any of the event happened, we check and update the status of all supported flags
-            // of peer fd.
+            // When any of the event happened, we check and update the status of all supported events
+            // types of peer fd.
             peer_fd.check_and_update_readiness(ecx)?;
         }
         Ok(Ok(()))
