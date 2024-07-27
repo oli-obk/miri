@@ -199,7 +199,7 @@ impl FileDescription for NullOutput {
 /// Structure contains both the file description and its unique identifier.
 #[derive(Clone, Debug)]
 pub struct FileDescWithID<T: FileDescription + ?Sized> {
-    id: usize,
+    id: FdID,
     file_description: RefCell<Box<T>>,
 }
 
@@ -238,9 +238,8 @@ impl FileDescriptor {
         WeakFileDescriptor(Rc::downgrade(&self.0))
     }
 
-    //TODO: wrap the usize in running id
     pub fn get_id(&self) -> usize {
-        self.0.id
+        self.0.id.0
     }
 
     /// Function used to retrieve the readiness of a file description and update the readiness of
@@ -304,6 +303,10 @@ impl Ord for WeakFileDescriptor {
     }
 }
 
+/// Wrapper struct for file description ID.
+#[derive(Debug, Clone)]
+struct FdID(usize);
+
 /// The file descriptor table
 #[derive(Debug)]
 pub struct FdTable {
@@ -338,7 +341,7 @@ impl FdTable {
     /// Insert a file descriptor to the FdTable and increment the file_description_id by 1.
     pub fn insert_fd<T: FileDescription>(&mut self, fd: T) -> i32 {
         let file_handle = FileDescriptor(Rc::new(FileDescWithID {
-            id: self.next_file_description_id,
+            id: FdID(self.next_file_description_id),
             file_description: RefCell::new(Box::new(fd)),
         }));
         self.next_file_description_id = self.next_file_description_id.checked_add(1).unwrap();
