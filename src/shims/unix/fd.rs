@@ -235,9 +235,10 @@ impl FileDescriptor {
     }
 
     pub fn downgrade(&self) -> WeakFileDescriptor {
-        WeakFileDescriptor(Rc::downgrade(&self.0))
+        WeakFileDescriptor { weak_ref: Rc::downgrade(&self.0), id: FdID(self.get_id()) }
     }
 
+    //TODO: return FdID instead
     pub fn get_id(&self) -> usize {
         self.0.id.0
     }
@@ -275,17 +276,20 @@ impl FileDescriptor {
 // WeakFileDescriptor is used in epoll ready_list and interest_list to avoid strong references,
 // so the file description can be closed properly.
 #[derive(Clone, Debug, Default)]
-pub struct WeakFileDescriptor(Weak<FileDescWithID<dyn FileDescription>>);
+pub struct WeakFileDescriptor {
+    weak_ref: Weak<FileDescWithID<dyn FileDescription>>,
+    id: FdID,
+}
 
 impl WeakFileDescriptor {
     pub fn upgrade(&self) -> Option<FileDescriptor> {
-        Some(FileDescriptor(self.0.upgrade()?))
+        Some(FileDescriptor(self.weak_ref.upgrade()?))
     }
 }
 
 impl PartialEq for WeakFileDescriptor {
     fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.0.as_ptr(), other.0.as_ptr())
+        self.id.eq(&other.id)
     }
 }
 
@@ -299,12 +303,12 @@ impl PartialOrd for WeakFileDescriptor {
 
 impl Ord for WeakFileDescriptor {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.0.as_ptr().cmp(&other.0.as_ptr())
+        self.id.cmp(&other.id)
     }
 }
 
 /// Wrapper struct for file description ID.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, Ord, PartialOrd)]
 struct FdID(usize);
 
 /// The file descriptor table
