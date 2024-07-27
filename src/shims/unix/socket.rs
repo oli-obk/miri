@@ -40,7 +40,7 @@ impl FileDescription for SocketPair {
         "socketpair"
     }
 
-    fn get_epoll_ready_flags<'tcx>(&self, ecx: &MiriInterpCx<'tcx>) -> InterpResult<'tcx, u32> {
+    fn get_epoll_ready_events<'tcx>(&self, ecx: &MiriInterpCx<'tcx>) -> InterpResult<'tcx, u32> {
         // We only check the status of EPOLLIN, EPOLLOUT and EPOLLRDHUP flag. If other event flags
         // need to be supported in the future, the check should be added here.
 

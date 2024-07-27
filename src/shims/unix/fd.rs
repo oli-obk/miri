@@ -89,8 +89,8 @@ pub trait FileDescription: std::fmt::Debug + Any {
 
     /// Check the readiness of file description.
     /// If the file description is ready for read and write, the u32 returned will be the XOR
-    /// of both readiness flag, which is (EPOLLIN | EPOLLOUT).
-    fn get_epoll_ready_flags<'tcx>(&self, _ecx: &MiriInterpCx<'tcx>) -> InterpResult<'tcx, u32> {
+    /// of both readiness events, which is (EPOLLIN | EPOLLOUT).
+    fn get_epoll_ready_events<'tcx>(&self, _ecx: &MiriInterpCx<'tcx>) -> InterpResult<'tcx, u32> {
         throw_unsup_format!("{}: epoll does not support this file description", self.name());
     }
 }
@@ -244,23 +244,26 @@ impl FileDescriptionRef {
         self.0.id.clone()
     }
 
-    /// Function used to retrieve the readiness of a file description and update the readiness of
-    /// all epoll_interests associated to it.
+    /// Function used to retrieve the readiness event status of a file description and inserts
+    ///  an `EpollReturn` into the ready list if the file description is ready.
     pub(crate) fn check_and_update_readiness<'tcx>(
         &self,
         ecx: &mut InterpCx<'tcx, MiriMachine<'tcx>>,
     ) -> InterpResult<'tcx, ()> {
-        // Get a list of epoll_fds that registered a specific file description.
+        // Get a list of epoll_event that is associated to a specific file description.
         if let Some(epoll_interests) = ecx.machine.epoll_interests.get_epoll_interest(self.get_id())
         {
-            let ready_flags = self.borrow_mut().get_epoll_ready_flags(ecx)?;
-            // Find and update the file description we want.
+            // Retrieve the readiness events of the file description.
+            let ready_events = self.borrow_mut().get_epoll_ready_events(ecx)?;
+
             for weak_epoll_interest in epoll_interests {
                 if let Some(epoll_interest) = weak_epoll_interest.upgrade() {
-                    // Retrieve the same flag between file description readiness and epoll interest and
-                    // update the ready list.
+                    // This checks if any of the events specified in epoll_interest.events match those
+                    // in ready_events.
                     let epoll_interest = epoll_interest.borrow();
-                    let flags = epoll_interest.events & ready_flags;
+                    let flags = epoll_interest.events & ready_events;
+                    // If there is any event that we are interested in being specified as ready,
+                    // insert a epoll_return to the ready list.
                     if flags != 0 {
                         let weak_fd_ref = epoll_interest.weak_file_description_ref.clone();
                         let epoll_key = (weak_fd_ref, epoll_interest.file_descriptor);
