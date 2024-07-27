@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::rc::{Rc, Weak};
 
-use crate::shims::unix::fd::WeakFileDescriptor;
+use crate::shims::unix::fd::{FdID, WeakFileDescriptor};
 use crate::shims::unix::*;
 use crate::*;
 
@@ -78,15 +78,14 @@ impl FileDescription for Epoll {
 }
 
 /// The table of all epoll_events.
-pub struct EpollEventTable(BTreeMap<usize, Vec<Weak<RefCell<EpollEvent>>>>);
+pub struct EpollEventTable(BTreeMap<FdID, Vec<Weak<RefCell<EpollEvent>>>>);
 
-//TODO: wrap the usize with RunningID
 impl EpollEventTable {
     pub(crate) fn new() -> Self {
         EpollEventTable(BTreeMap::new())
     }
 
-    pub fn insert_epoll_event(&mut self, id: usize, fd: Weak<RefCell<EpollEvent>>) {
+    pub fn insert_epoll_event(&mut self, id: FdID, fd: Weak<RefCell<EpollEvent>>) {
         match self.0.get_mut(&id) {
             Some(fds) => {
                 fds.push(fd);
@@ -98,14 +97,11 @@ impl EpollEventTable {
         }
     }
 
-    pub fn get_epoll_event(&self, id: usize) -> Option<&Vec<Weak<RefCell<EpollEvent>>>> {
+    pub fn get_epoll_event(&self, id: FdID) -> Option<&Vec<Weak<RefCell<EpollEvent>>>> {
         Some(self.0.get(&id)?)
     }
 
-    pub fn get_epoll_event_mut(
-        &mut self,
-        id: usize,
-    ) -> Option<&mut Vec<Weak<RefCell<EpollEvent>>>> {
+    pub fn get_epoll_event_mut(&mut self, id: FdID) -> Option<&mut Vec<Weak<RefCell<EpollEvent>>>> {
         Some(self.0.get_mut(&id)?)
     }
 
@@ -113,7 +109,7 @@ impl EpollEventTable {
         self.0.is_empty()
     }
 
-    pub fn remove(&mut self, id: usize) {
+    pub fn remove(&mut self, id: FdID) {
         self.0.remove(&id);
     }
 }

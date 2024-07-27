@@ -235,12 +235,11 @@ impl FileDescriptor {
     }
 
     pub fn downgrade(&self) -> WeakFileDescriptor {
-        WeakFileDescriptor { weak_ref: Rc::downgrade(&self.0), id: FdID(self.get_id()) }
+        WeakFileDescriptor { weak_ref: Rc::downgrade(&self.0), id: self.get_id() }
     }
 
-    //TODO: return FdID instead
-    pub fn get_id(&self) -> usize {
-        self.0.id.0
+    pub fn get_id(&self) -> FdID {
+        self.0.id.clone()
     }
 
     /// Function used to retrieve the readiness of a file description and update the readiness of
@@ -309,7 +308,7 @@ impl Ord for WeakFileDescriptor {
 
 /// Wrapper struct for file description ID.
 #[derive(Debug, Clone, Default, Eq, PartialEq, Ord, PartialOrd)]
-struct FdID(usize);
+pub struct FdID(usize);
 
 /// The file descriptor table
 #[derive(Debug)]
