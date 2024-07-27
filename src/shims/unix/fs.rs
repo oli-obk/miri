@@ -484,13 +484,13 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         let communicate = this.machine.communicate();
 
-        let Some(mut file_descriptor) = this.machine.fds.get_mut(fd) else {
+        let Some(mut file_description_ref) = this.machine.fds.get_mut(fd) else {
             return Ok(Scalar::from_i64(this.fd_not_found()?));
         };
-        let result = file_descriptor
+        let result = file_description_ref
             .seek(communicate, seek_from)?
             .map(|offset| i64::try_from(offset).unwrap());
-        drop(file_descriptor);
+        drop(file_description_ref);
 
         let result = this.try_unwrap_io_result(result)?;
         Ok(Scalar::from_i64(result))

@@ -288,17 +288,16 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let sv1 = fds.insert_fd(socketpair_1);
 
         // Get weak file descriptor and file description id value.
-        let file_descriptor0 = fds.dup(sv0).unwrap();
-        let file_descriptor1 = fds.dup(sv1).unwrap();
-        let weak_fd_ref0 = file_descriptor0.downgrade();
-        let weak_fd_ref1 = file_descriptor1.downgrade();
+        let fd_ref0 = fds.dup(sv0).unwrap();
+        let fd_ref1 = fds.dup(sv1).unwrap();
+        let weak_fd_ref0 = fd_ref0.downgrade();
+        let weak_fd_ref1 = fd_ref1.downgrade();
 
         // Update peer_fd and id field.
         //TODO: tidy up, how is it possible to deduplicate, unwrap always free value.
-        file_descriptor1.borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd = weak_fd_ref0;
+        fd_ref1.borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd = weak_fd_ref0;
 
-        file_descriptor0.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd =
-            weak_fd_ref1;
+        fd_ref0.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd = weak_fd_ref1;
 
         // Return socketpair file description value to the caller.
         let sv0 = Scalar::from_int(sv0, sv.layout.size);

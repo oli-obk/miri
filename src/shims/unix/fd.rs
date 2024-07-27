@@ -204,9 +204,9 @@ pub struct FileDescWithID<T: FileDescription + ?Sized> {
 }
 
 #[derive(Clone, Debug)]
-pub struct FileDescriptor(Rc<FileDescWithID<dyn FileDescription>>);
+pub struct FileDescriptionRef(Rc<FileDescWithID<dyn FileDescription>>);
 
-impl FileDescriptor {
+impl FileDescriptionRef {
     pub fn borrow(&self) -> Ref<'_, dyn FileDescription> {
         Ref::map(self.0.file_description.borrow(), |fd| fd.as_ref())
     }
@@ -281,8 +281,8 @@ pub struct WeakFileDescriptionRef {
 }
 
 impl WeakFileDescriptionRef {
-    pub fn upgrade(&self) -> Option<FileDescriptor> {
-        Some(FileDescriptor(self.weak_ref.upgrade()?))
+    pub fn upgrade(&self) -> Option<FileDescriptionRef> {
+        Some(FileDescriptionRef(self.weak_ref.upgrade()?))
     }
 }
 
@@ -313,7 +313,7 @@ pub struct FdID(usize);
 /// The file descriptor table
 #[derive(Debug)]
 pub struct FdTable {
-    pub fds: BTreeMap<i32, FileDescriptor>,
+    pub fds: BTreeMap<i32, FileDescriptionRef>,
     /// Unique identifier for file description, used to differentiate between various file description.
     next_file_description_id: usize,
 }
@@ -343,7 +343,7 @@ impl FdTable {
 
     /// Insert a file descriptor to the FdTable and increment the file_description_id by 1.
     pub fn insert_fd<T: FileDescription>(&mut self, fd: T) -> i32 {
-        let file_handle = FileDescriptor(Rc::new(FileDescWithID {
+        let file_handle = FileDescriptionRef(Rc::new(FileDescWithID {
             id: FdID(self.next_file_description_id),
             file_description: RefCell::new(Box::new(fd)),
         }));
@@ -352,7 +352,7 @@ impl FdTable {
     }
 
     /// Insert a new FD that is at least `min_fd`.
-    pub fn insert_fd_with_min_fd(&mut self, file_handle: FileDescriptor, min_fd: i32) -> i32 {
+    pub fn insert_fd_with_min_fd(&mut self, file_handle: FileDescriptionRef, min_fd: i32) -> i32 {
         // Find the lowest unused FD, starting from min_fd. If the first such unused FD is in
         // between used FDs, the find_map combinator will return it. If the first such unused FD
         // is after all other used FDs, the find_map combinator will return None, and we will use
@@ -388,12 +388,12 @@ impl FdTable {
         Some(fd.borrow_mut())
     }
 
-    pub fn dup(&self, fd: i32) -> Option<FileDescriptor> {
+    pub fn dup(&self, fd: i32) -> Option<FileDescriptionRef> {
         let fd = self.fds.get(&fd)?;
         Some(fd.clone())
     }
 
-    pub fn remove(&mut self, fd: i32) -> Option<FileDescriptor> {
+    pub fn remove(&mut self, fd: i32) -> Option<FileDescriptionRef> {
         self.fds.remove(&fd)
     }
 
