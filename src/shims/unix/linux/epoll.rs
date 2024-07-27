@@ -10,7 +10,9 @@ use crate::*;
 /// An `Epoll` file descriptor connects file handles and epoll events
 #[derive(Clone, Debug, Default)]
 struct Epoll {
-    /// The file descriptors we are watching, and what we are watching for.
+    /// A map of epoll_events registered under this epoll instance.
+    /// Each entry is differentiated using the ID of FileDescriptionRef and
+    /// the file descriptor value assigned.
     interest_list: BTreeMap<(WeakFileDescriptionRef, i32), Rc<RefCell<EpollEvent>>>,
     // ready_list is an Rc because EpollEvents need to hold a reference to update
     // it.

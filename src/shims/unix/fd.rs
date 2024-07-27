@@ -87,7 +87,9 @@ pub trait FileDescription: std::fmt::Debug + Any {
         false
     }
 
-    /// Check the readiness of epoll-supported file description.
+    /// Check the readiness of file description.
+    /// If the file description is ready for read and write, the u32 returned will be the XOR
+    /// of both readiness flag, which is (EPOLLIN | EPOLLOUT).
     fn get_epoll_ready_flags<'tcx>(&self, _ecx: &MiriInterpCx<'tcx>) -> InterpResult<'tcx, u32> {
         throw_unsup_format!("{}: epoll does not support this file description", self.name());
     }
@@ -272,8 +274,7 @@ impl FileDescriptionRef {
     }
 }
 
-// WeakFileDescriptor is used in epoll ready_list and interest_list to avoid strong references,
-// so the file description can be closed properly.
+/// WeakFileDescriptorRef holds a weak reference to the actual file description.
 #[derive(Clone, Debug, Default)]
 pub struct WeakFileDescriptionRef {
     weak_ref: Weak<FileDescWithID<dyn FileDescription>>,
@@ -285,6 +286,10 @@ impl WeakFileDescriptionRef {
         Some(FileDescriptionRef(self.weak_ref.upgrade()?))
     }
 }
+
+// PartialEq, Eq, PartialOrd and Ord are implemented here because WeakFileDescriptionRef
+// is used as a key in the interest_list and ready_list in Epoll. It is ordered using
+// file description ID assigned.
 
 impl PartialEq for WeakFileDescriptionRef {
     fn eq(&self, other: &Self) -> bool {
