@@ -5,6 +5,7 @@ use std::convert::TryInto;
 use std::mem::MaybeUninit;
 
 fn main() {
+    test_epoll_special_case();
     test_two_epoll_instance();
     test_epoll_ctl_mod();
     test_epoll_socketpair();
@@ -297,4 +298,55 @@ fn test_pointer() {
     };
     let res = unsafe { libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, fds[1], &mut ev) };
     assert_ne!(res, -1);
+}
+
+// When read/write happened on one side of the socketpair, only the other side will be notified.
+// will be notified.
+fn test_epoll_special_case() {
+    // Create an epoll instance.
+    let epfd = unsafe { libc::epoll_create1(0) };
+    assert_ne!(epfd, -1);
+
+    // Create a socketpair instance.
+    let mut fds = [-1, -1];
+    let res = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+    assert_eq!(res, 0);
+
+    // Register both fd to the same epoll instance.
+    let epollet = libc::EPOLLET as u32;
+    let flags = u32::try_from(libc::EPOLLIN | libc::EPOLLOUT).unwrap() | epollet;
+    let mut ev = libc::epoll_event { events: u32::try_from(flags).unwrap(), u64: fds[0] as u64 };
+    let mut res = unsafe { libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, fds[0], &mut ev) };
+    assert_ne!(res, -1);
+    let mut ev = libc::epoll_event { events: u32::try_from(flags).unwrap(), u64: fds[1] as u64 };
+    res = unsafe { libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, fds[1], &mut ev) };
+    assert_ne!(res, -1);
+
+    // Write to fds[1].
+    let data = "abcde".as_bytes().as_ptr();
+    res = unsafe { libc::write(fds[1], data as *const libc::c_void, 5).try_into().unwrap() };
+    assert_eq!(res, 5);
+
+    //Two notification should be received.
+    let expected_event0 = u32::try_from(libc::EPOLLIN | libc::EPOLLOUT).unwrap();
+    let expected_value0 = fds[0] as u64;
+    let expected_event1 = u32::try_from(libc::EPOLLOUT).unwrap();
+    let expected_value1 = fds[1] as u64;
+    assert!(check_epoll_wait::<8>(
+        epfd,
+        vec![(expected_event1, expected_value1), (expected_event0, expected_value0)]
+    ));
+
+    // Read from fds[0]
+    let mut buf: [u8; 5] = [0; 5];
+    res = unsafe {
+        libc::read(fds[0], buf.as_mut_ptr().cast(), buf.len() as libc::size_t).try_into().unwrap()
+    };
+    assert_eq!(res, 5);
+    assert_eq!(buf, "abcde".as_bytes());
+
+    //Notification should only be provided for fds[1] even though we read from fds[0].
+    let expected_event = u32::try_from(libc::EPOLLOUT).unwrap();
+    let expected_value = fds[1] as u64;
+    assert!(check_epoll_wait::<8>(epfd, vec![(expected_event, expected_value)]));
 }

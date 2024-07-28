@@ -294,7 +294,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let weak_fd_ref1 = fd_ref1.downgrade();
 
         // Update peer_fd and id field.
-        //TODO: tidy up, how is it possible to deduplicate, unwrap always free value.
         fd_ref1.borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd = weak_fd_ref0;
 
         fd_ref0.clone().borrow_mut().downcast_mut::<SocketPair>().unwrap().peer_fd = weak_fd_ref1;
