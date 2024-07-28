@@ -5,7 +5,7 @@ use std::convert::TryInto;
 use std::mem::MaybeUninit;
 
 fn main() {
-    test_epoll_special_case();
+    test_epoll_socketpair_special_case();
     test_two_epoll_instance();
     test_epoll_ctl_mod();
     test_epoll_socketpair();
@@ -301,8 +301,7 @@ fn test_pointer() {
 }
 
 // When read/write happened on one side of the socketpair, only the other side will be notified.
-// will be notified.
-fn test_epoll_special_case() {
+fn test_epoll_socketpair_special_case() {
     // Create an epoll instance.
     let epfd = unsafe { libc::epoll_create1(0) };
     assert_ne!(epfd, -1);
