@@ -59,7 +59,7 @@ pub struct EpollInterest {
     /// The data retrieved from `epoll_event`.
     /// libc's data field in epoll_event can store integer or pointer,
     /// but only u64 is supported for now.
-    /// https://man7.org/linux/man-pages/man3/epoll_event.3type.html
+    /// <https://man7.org/linux/man-pages/man3/epoll_event.3type.html>
     pub data: u64,
     /// Ready list of the epoll instance under which this epoll_interest is stored.
     pub ready_list: Rc<RefCell<BTreeMap<(WeakFileDescriptionRef, i32), EpollReturn>>>,
