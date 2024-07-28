@@ -571,7 +571,10 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 fd.borrow_mut().pread(communicate, &mut bytes, offset, this)
             }
         };
-        if let Ok(Ok(_)) = result {
+        let is_socketpair_fd = fd.borrow().name() == "socketpair";
+        // edge case for socketpair: only the peer socketpair needs to be updated and it is
+        // currently done under FileDescription::read of socketpair.
+        if is_socketpair_fd && let Ok(Ok(_)) = result {
             // When a read has happened, we check and update the status of all supported flags.
             fd.check_and_update_readiness(this)?;
         }
@@ -633,7 +636,10 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 fd.borrow_mut().pwrite(communicate, &bytes, offset, this)
             }
         };
-        if let Ok(Ok(_)) = result {
+        let is_socketpair_fd = fd.borrow().name() == "socketpair";
+        // edge case for socketpair: only the peer socketpair needs to be updated and it is
+        // currently done under FileDescription::write of socketpair.
+        if is_socketpair_fd && let Ok(Ok(_)) = result {
             // When a write has happened, we check and update the status of all supported flags.
             fd.check_and_update_readiness(this)?;
         }
