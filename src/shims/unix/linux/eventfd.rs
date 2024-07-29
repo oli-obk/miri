@@ -3,6 +3,7 @@ use std::io;
 use std::io::{Error, ErrorKind};
 use std::mem;
 
+use fd::FdID;
 use rustc_target::abi::Endian;
 
 use crate::shims::unix::*;
@@ -28,6 +29,11 @@ struct Event {
     counter: u64,
     is_nonblock: bool,
     clock: VClock,
+    /// We have to store our own FdID in contrast to every other file descriptor out there, because
+    /// we are updating ourselves when writing and reading. Technically `Event` is like socketpair, but
+    /// it does not create two separate file descriptors. Thus we can't re-borrow ourselves via
+    /// `FileDescriptionRef::check_and_update_readiness` while already being mutably borrowed for read/write.w
+    id: FdID,
 }
 
 impl FileDescription for Event {
@@ -89,6 +95,7 @@ impl FileDescription for Event {
                 Endian::Big => self.counter.to_be_bytes(),
             };
             self.counter = 0;
+            ecx.check_and_update_readiness(self.id, |ecx| self.get_epoll_ready_events(ecx))?;
             return Ok(Ok(U64_ARRAY_SIZE));
         }
     }
@@ -143,6 +150,7 @@ impl FileDescription for Event {
                 }
             }
         };
+        ecx.check_and_update_readiness(self.id, |ecx| self.get_epoll_ready_events(ecx))?;
         Ok(Ok(U64_ARRAY_SIZE))
     }
 }
@@ -199,9 +207,18 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         let fds = &mut this.machine.fds;
 
-        let fd_value =
-            fds.insert_fd(Event { counter: val.into(), is_nonblock, clock: VClock::default() });
-        // Update the assigned file description value.
+        let fd_value = fds.insert_fd(Event {
+            counter: val.into(),
+            is_nonblock,
+            clock: VClock::default(),
+            id: FdID::DUMMY,
+        });
+
+        // Set the id of the `Event` to itself.
+        let fd = fds.dup(fd_value).unwrap();
+        let id = fd.get_id();
+        fd.borrow_mut().downcast_mut::<Event>().unwrap().id = id;
+
         Ok(Scalar::from_i32(fd_value))
     }
 }

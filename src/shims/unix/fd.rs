@@ -241,7 +241,7 @@ impl FileDescriptionRef {
     }
 
     pub fn get_id(&self) -> FdID {
-        self.0.id.clone()
+        self.0.id
     }
 
     /// Function used to retrieve the readiness event status of a file description and insert
@@ -294,8 +294,12 @@ impl Ord for WeakFileDescriptionRef {
 }
 
 /// Wrapper struct for file description ID.
-#[derive(Debug, Clone, Default, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Copy, Clone, Default, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FdID(usize);
+
+impl FdID {
+    pub const DUMMY: Self = Self(usize::MAX);
+}
 
 /// The file descriptor table
 #[derive(Debug)]
@@ -582,15 +586,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 fd.borrow_mut().pread(communicate, &mut bytes, offset, this)
             }
         };
-        let is_socketpair_fd = fd.borrow().name() == "socketpair";
-        // edge case for socketpair: only the peer socketpair needs to be updated and it is
-        // currently done under FileDescription::read of socketpair.
-        if let Ok(Ok(_)) = result {
-            // When a read has happened, we check and update the status of all supported flags.
-            if !is_socketpair_fd {
-                fd.check_and_update_readiness(this)?;
-            }
-        }
 
         // `File::read` never returns a value larger than `count`, so this cannot fail.
         match result?.map(|c| i64::try_from(c).unwrap()) {
@@ -649,15 +644,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 fd.borrow_mut().pwrite(communicate, &bytes, offset, this)
             }
         };
-        let is_socketpair_fd = fd.borrow().name() == "socketpair";
-        // edge case for socketpair: only the peer socketpair needs to be updated and it is
-        // currently done under FileDescription::write of socketpair.
-        if let Ok(Ok(_)) = result {
-            // When a write has happened, we check and update the status of all supported flags.
-            if !is_socketpair_fd {
-                fd.check_and_update_readiness(this)?;
-            }
-        }
 
         let result = result?.map(|c| i64::try_from(c).unwrap());
         this.try_unwrap_io_result(result)
