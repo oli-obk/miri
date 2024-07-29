@@ -183,6 +183,6 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             is_nonblock,
             clock: VClock::default(),
         });
-        Ok(Scalar::from_i32(fd))
+        Ok(fd.into())
     }
 }

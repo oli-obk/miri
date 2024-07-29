@@ -226,31 +226,52 @@ impl VisitProvenance for FdTable {
     }
 }
 
+/// An integral file descriptor.
+pub struct FileDescriptor {
+    id: i32,
+}
+impl FileDescriptor {
+    /// Obtain the integer representation of this file descriptor
+    pub fn to_i32(&self) -> i32 {
+        self.id
+    }
+}
+
+impl From<FileDescriptor> for Scalar {
+    fn from(fd: FileDescriptor) -> Scalar {
+        Scalar::from_i32(fd.id)
+    }
+}
+
 impl FdTable {
     fn new() -> Self {
         FdTable { fds: BTreeMap::new() }
     }
     pub(crate) fn init(mute_stdout_stderr: bool) -> FdTable {
         let mut fds = FdTable::new();
-        fds.insert_fd(io::stdin());
+        assert_eq!(fds.insert_fd(io::stdin()).id, 0);
         if mute_stdout_stderr {
-            assert_eq!(fds.insert_fd(NullOutput), 1);
-            assert_eq!(fds.insert_fd(NullOutput), 2);
+            assert_eq!(fds.insert_fd(NullOutput).id, 1);
+            assert_eq!(fds.insert_fd(NullOutput).id, 2);
         } else {
-            assert_eq!(fds.insert_fd(io::stdout()), 1);
-            assert_eq!(fds.insert_fd(io::stderr()), 2);
+            assert_eq!(fds.insert_fd(io::stdout()).id, 1);
+            assert_eq!(fds.insert_fd(io::stderr()).id, 2);
         }
         fds
     }
 
     /// Insert a new file description to the FdTable.
-    pub fn insert_fd(&mut self, fd: impl FileDescription) -> i32 {
+    pub fn insert_fd(&mut self, fd: impl FileDescription) -> FileDescriptor {
         let file_handle = FileDescriptionRef::new(fd);
         self.insert_fd_with_min_fd(file_handle, 0)
     }
 
     /// Insert a new FD that is at least `min_fd`.
-    fn insert_fd_with_min_fd(&mut self, file_handle: FileDescriptionRef, min_fd: i32) -> i32 {
+    fn insert_fd_with_min_fd(
+        &mut self,
+        file_handle: FileDescriptionRef,
+        min_fd: i32,
+    ) -> FileDescriptor {
         // Find the lowest unused FD, starting from min_fd. If the first such unused FD is in
         // between used FDs, the find_map combinator will return it. If the first such unused FD
         // is after all other used FDs, the find_map combinator will return None, and we will use
@@ -273,29 +294,29 @@ impl FdTable {
         });
 
         self.fds.try_insert(new_fd, file_handle).unwrap();
-        new_fd
+        FileDescriptor { id: new_fd }
     }
 
-    pub fn get(&self, fd: i32) -> Option<Ref<'_, dyn FileDescription>> {
+    pub fn get(&self, fd: FileDescription) -> Option<Ref<'_, dyn FileDescription>> {
         let fd = self.fds.get(&fd)?;
         Some(fd.borrow())
     }
 
-    pub fn get_mut(&self, fd: i32) -> Option<RefMut<'_, dyn FileDescription>> {
+    pub fn get_mut(&self, fd: FileDescription) -> Option<RefMut<'_, dyn FileDescription>> {
         let fd = self.fds.get(&fd)?;
         Some(fd.borrow_mut())
     }
 
-    pub fn dup(&self, fd: i32) -> Option<FileDescriptionRef> {
+    pub fn dup(&self, fd: FileDescription) -> Option<FileDescriptionRef> {
         let fd = self.fds.get(&fd)?;
         Some(fd.clone())
     }
 
-    pub fn remove(&mut self, fd: i32) -> Option<FileDescriptionRef> {
+    pub fn remove(&mut self, fd: FileDescription) -> Option<FileDescriptionRef> {
         self.fds.remove(&fd)
     }
 
-    pub fn is_fd(&self, fd: i32) -> bool {
+    pub fn is_fd(&self, fd: FileDescription) -> bool {
         self.fds.contains_key(&fd)
     }
 }
@@ -308,7 +329,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let Some(dup_fd) = this.machine.fds.dup(old_fd) else {
             return this.fd_not_found();
         };
-        Ok(this.machine.fds.insert_fd_with_min_fd(dup_fd, 0))
+        Ok(this.machine.fds.insert_fd_with_min_fd(dup_fd, 0).to_i32())
     }
 
     fn dup2(&mut self, old_fd: i32, new_fd: i32) -> InterpResult<'tcx, i32> {
@@ -367,7 +388,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             let start = this.read_scalar(&args[2])?.to_i32()?;
 
             match this.machine.fds.dup(fd) {
-                Some(dup_fd) => Ok(this.machine.fds.insert_fd_with_min_fd(dup_fd, start)),
+                Some(dup_fd) => Ok(this.machine.fds.insert_fd_with_min_fd(dup_fd, start).to_i32()),
                 None => this.fd_not_found(),
             }
         } else if this.tcx.sess.target.os == "macos" && cmd == this.eval_libc_i32("F_FULLFSYNC") {

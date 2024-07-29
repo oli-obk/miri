@@ -452,7 +452,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
 
         let fd = options
             .open(path)
-            .map(|file| this.machine.fds.insert_fd(FileHandle { file, writable }));
+            .map(|file| this.machine.fds.insert_fd(FileHandle { file, writable }).to_i32());
 
         this.try_unwrap_io_result(fd)
     }
@@ -1545,7 +1545,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             match file {
                 Ok(f) => {
                     let fd = this.machine.fds.insert_fd(FileHandle { file: f, writable: true });
-                    return Ok(fd);
+                    return Ok(fd.to_i32());
                 }
                 Err(e) =>
                     match e.kind() {
